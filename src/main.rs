@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json as json;
 use std::io;
 
 fn read_len() -> io::Result<usize> {
@@ -15,17 +15,14 @@ fn read_len() -> io::Result<usize> {
     return Ok(0);
 }
 
+fn read_msg() -> json::Result<json::Value> {
+    let val: json::Value = serde_json::from_reader(io::stdin())?;
+    return Ok(val);
+}
+
 fn main() {
     eprintln!("starting spelgud");
     eprintln!("got len: {}", read_len().unwrap());
+    eprintln!("got msg: {}", read_msg().unwrap());
     return;
-    // // Parse the string of data into serde_json::Value.
-    // let v: Value = match serde_json::from_reader(io::stdin()) {
-    //     Ok(j) => j,
-    //     Err(err) => {
-    //         panic!("Failed to deserialize: {:?}", err)
-    //     }
-    // };
-
-    // eprintln!("{}", v);
 }
