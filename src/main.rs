@@ -1,35 +1,57 @@
 use serde::{Deserialize, Serialize};
 use serde_json as json;
-use std::io;
+use std::error::Error;
+use std::io::{self, Read};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Request {
     id: u32,
     method: String,
-    params: serde_json::Value,
+    params: json::Value,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Response {
     id: u32,
+    result: json::Value,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ServerInfo {
+    name: String,
+    version: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct InitializeResult {
+    capabilities: ServerInfo,
+    server_info: ServerInfo,
 }
 
 fn read_len() -> io::Result<usize> {
+    let mut len = 0;
+
     for line in io::stdin().lines() {
-        match line?.strip_prefix("Content-Length: ") {
+        let l = line?;
+        if l.is_empty() {
+            break;
+        }
+        match l.strip_prefix("Content-Length: ") {
             Some(l) => match l.parse::<usize>() {
-                Ok(sz) => return Ok(sz),
+                Ok(sz) => len = sz,
                 Err(err) => panic!("Failed to parse: {}", err),
             },
             None => {}
         }
     }
 
-    return Ok(0);
+    return Ok(len);
 }
 
-fn read_request() -> json::Result<Request> {
-    let req: Request = json::from_reader(io::stdin())?;
+fn read_request(len: usize) -> Result<Request, Box<dyn Error>> {
+    let mut buf = vec![0; len];
+    io::stdin().read_exact(&mut buf)?;
+    let req: Request = json::from_slice(&buf)?;
     return Ok(req);
 }
 
@@ -43,9 +65,18 @@ fn reply(resp: Response) -> json::Result<()> {
 fn main() {
     eprintln!("starting spelgud");
     loop {
-        eprintln!("got len: {}", read_len().unwrap());
-        let req = read_request().unwrap();
+        let len = read_len().unwrap();
+        eprintln!("got len: {}", len);
+        let req = read_request(len).unwrap();
         eprintln!("got msg: {:?}", req);
-        reply(Response { id: req.id }).unwrap();
+        reply(Response {
+            id: req.id,
+            result: json::to_value(ServerInfo {
+                name: String::from("spelgud"),
+                version: String::from("0.1"),
+            })
+            .unwrap(),
+        })
+        .unwrap();
     }
 }
