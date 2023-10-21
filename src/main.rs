@@ -1,7 +1,8 @@
 use std::error::Error;
 
 use lsp_types::{
-    request::GotoDefinition, GotoDefinitionResponse, InitializeParams, ServerCapabilities,
+    notification::PublishDiagnostics, request::GotoDefinition, DiagnosticSeverity,
+    GotoDefinitionResponse, InitializeParams, Range, ServerCapabilities,
 };
 
 use lsp_server::{Connection, ExtractError, Message, Notification, Request, RequestId, Response};
@@ -71,6 +72,10 @@ fn main_loop(
                 match notification::<lsp_types::notification::DidOpenTextDocument>(not) {
                     Ok(params) => {
                         eprintln!("Got DidOpenTextDocument: {params:?}");
+                        match on_open(params) {
+                            Ok(resp) => connection.sender.send(Message::Notification(resp))?,
+                            Err(err) => eprintln!("DidOpenTextDocument error: {err:?}"),
+                        }
                     }
                     Err(err) => {
                         eprintln!("DidOpenTextDocument error: {err:?}");
@@ -96,4 +101,40 @@ where
     N::Params: serde::de::DeserializeOwned,
 {
     not.extract(N::METHOD)
+}
+
+fn method<N>() -> String
+where
+    N: lsp_types::notification::Notification,
+    N::Params: serde::de::DeserializeOwned,
+{
+    String::from(N::METHOD)
+}
+
+fn on_open(params: lsp_types::DidOpenTextDocumentParams) -> Result<Notification, Box<dyn Error>> {
+    let diags = vec![lsp_types::Diagnostic {
+        range: Range {
+            start: lsp_types::Position {
+                line: 0,
+                character: 0,
+            },
+            end: lsp_types::Position {
+                line: 0,
+                character: 10,
+            },
+        },
+        severity: Some(DiagnosticSeverity::ERROR),
+        source: Some(String::from("spell")),
+        message: String::from("misspelling"),
+        ..Default::default()
+    }];
+    let result = Some(lsp_types::PublishDiagnosticsParams {
+        uri: params.text_document.uri,
+        diagnostics: diags,
+        version: None,
+    });
+    Ok(Notification {
+        method: method::<PublishDiagnostics>(),
+        params: serde_json::to_value(&result)?,
+    })
 }
