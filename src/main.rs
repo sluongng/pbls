@@ -1,23 +1,25 @@
 use std::error::Error;
 
-use lsp_types::OneOf;
 use lsp_types::{
     request::GotoDefinition, GotoDefinitionResponse, InitializeParams, ServerCapabilities,
 };
 
-use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response};
+use lsp_server::{Connection, ExtractError, Message, Notification, Request, RequestId, Response};
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     // Note that  we must have our logging only write out to stderr.
-    eprintln!("starting generic LSP server");
+    eprintln!("Starting generic LSP server");
 
-    // Create the transport. Includes the stdio (stdin and stdout) versions but this could
-    // also be implemented to use sockets or HTTP.
     let (connection, io_threads) = Connection::stdio();
 
-    // Run the server and wait for the two threads to end (typically by trigger LSP Exit event).
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
-        definition_provider: Some(OneOf::Left(true)),
+        // completion_provider: Some(lsp_types::CompletionOptions::default()),
+        diagnostic_provider: Some(lsp_types::DiagnosticServerCapabilities::Options(
+            lsp_types::DiagnosticOptions {
+                identifier: Some(String::from("spelgud")),
+                ..Default::default()
+            },
+        )),
         ..Default::default()
     })
     .unwrap();
@@ -25,8 +27,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     main_loop(connection, initialization_params)?;
     io_threads.join()?;
 
-    // Shut down gracefully.
-    eprintln!("shutting down server");
+    eprintln!("Shutting down server");
     Ok(())
 }
 
@@ -35,15 +36,15 @@ fn main_loop(
     params: serde_json::Value,
 ) -> Result<(), Box<dyn Error + Sync + Send>> {
     let _params: InitializeParams = serde_json::from_value(params).unwrap();
-    eprintln!("starting example main loop");
+    eprintln!("Starting example main loop");
     for msg in &connection.receiver {
-        eprintln!("got msg: {msg:?}");
+        eprintln!("Got msg: {msg:?}");
         match msg {
             Message::Request(req) => {
                 if connection.handle_shutdown(&req)? {
                     return Ok(());
                 }
-                eprintln!("got request: {req:?}");
+                eprintln!("Got request: {req:?}");
                 match cast::<GotoDefinition>(req) {
                     Ok((id, params)) => {
                         eprintln!("got gotoDefinition request #{id}: {params:?}");
@@ -67,6 +68,14 @@ fn main_loop(
             }
             Message::Notification(not) => {
                 eprintln!("got notification: {not:?}");
+                match notification::<lsp_types::notification::DidOpenTextDocument>(not) {
+                    Ok(params) => {
+                        eprintln!("Got DidOpenTextDocument: {params:?}");
+                    }
+                    Err(err) => {
+                        eprintln!("DidOpenTextDocument error: {err:?}");
+                    }
+                }
             }
         }
     }
@@ -79,4 +88,12 @@ where
     R::Params: serde::de::DeserializeOwned,
 {
     req.extract(R::METHOD)
+}
+
+fn notification<N>(not: Notification) -> Result<N::Params, ExtractError<Notification>>
+where
+    N: lsp_types::notification::Notification,
+    N::Params: serde::de::DeserializeOwned,
+{
+    not.extract(N::METHOD)
 }
