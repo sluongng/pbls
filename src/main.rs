@@ -1,3 +1,4 @@
+use lsp_types;
 use serde::{Deserialize, Serialize};
 use serde_json as json;
 use std::error::Error;
@@ -63,7 +64,16 @@ fn reply(resp: Response) -> json::Result<()> {
 }
 
 fn main() {
-    eprintln!("starting spelgud");
+    let result = lsp_types::InitializeResult {
+        capabilities: lsp_types::ServerCapabilities {
+            ..lsp_types::ServerCapabilities::default()
+        },
+        server_info: Some(lsp_types::ServerInfo {
+            name: String::from("spelgud"),
+            version: Some(String::from("0.1")),
+        }),
+    };
+    eprintln!("starting spelgud {:?}", json::to_string(&result));
     loop {
         let len = read_len().unwrap();
         eprintln!("got len: {}", len);
@@ -71,11 +81,7 @@ fn main() {
         eprintln!("got msg: {:?}", req);
         reply(Response {
             id: req.id,
-            result: json::to_value(ServerInfo {
-                name: String::from("spelgud"),
-                version: String::from("0.1"),
-            })
-            .unwrap(),
+            result: json::to_value(&result).unwrap(),
         })
         .unwrap();
     }
