@@ -1,21 +1,29 @@
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf_parse;
-use std::error::Error;
+use std::{error::Error, path};
 
 use lsp_types::{
-    notification::PublishDiagnostics, request::GotoDefinition, DiagnosticSeverity,
-    GotoDefinitionResponse, InitializeParams, Range, ServerCapabilities,
+    notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
+    request::GotoDefinition,
+    Diagnostic, DiagnosticServerCapabilities, DiagnosticSeverity, GotoDefinitionResponse,
+    InitializeParams, Range, ServerCapabilities, TextDocumentSyncCapability,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Url,
 };
 
-use lsp_server::{Connection, ExtractError, Message, Notification, Request, RequestId, Response};
+use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response};
 
-fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    eprintln!("{}", parse("").unwrap_err().source().unwrap());
+fn main() -> Result<(), Box<dyn Error>> {
     let (connection, io_threads) = Connection::stdio();
 
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            TextDocumentSyncOptions {
+                save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+                ..Default::default()
+            },
+        )),
         // completion_provider: Some(lsp_types::CompletionOptions::default()),
-        diagnostic_provider: Some(lsp_types::DiagnosticServerCapabilities::Options(
+        diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
             lsp_types::DiagnosticOptions {
                 identifier: Some(String::from("spelgud")),
                 ..Default::default()
@@ -28,7 +36,6 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     main_loop(connection, initialization_params)?;
     io_threads.join()?;
 
-    eprintln!("Shutting down server");
     Ok(())
 }
 
@@ -36,8 +43,8 @@ fn parse(path: &str) -> Result<Vec<FileDescriptorProto>, Box<dyn Error>> {
     let mut parser = protobuf_parse::Parser::new();
     parser.pure();
     parser.capture_stderr();
-    parser.input("./example.proto");
-    parser.include(".");
+    parser.input(path);
+    parser.include(path::Path::new(".").canonicalize()?);
     Ok(parser.file_descriptor_set()?.file)
 }
 
@@ -59,12 +66,11 @@ fn parse_diag_pure(line: &str) -> Result<lsp_types::Diagnostic, Box<dyn Error>> 
         .strip_prefix(" at ")
         .ok_or(format!("Error line missing location prefix: {}", line))?
         .parse::<u32>()?;
-    let colno = parts
+    let _colno = parts
         .next()
         .ok_or(format!("Error line missing column number: {}", line))?
         .parse::<u32>()?;
     let msg = parts.next().ok_or("Error line missing message")?;
-    eprintln!("Parsed: line={}, col={}, msg={}", lineno, colno, msg);
     Ok(lsp_types::Diagnostic {
         range: Range {
             start: lsp_types::Position {
@@ -83,33 +89,24 @@ fn parse_diag_pure(line: &str) -> Result<lsp_types::Diagnostic, Box<dyn Error>> 
     })
 }
 
-fn get_diagnostics(err: &dyn Error) -> Result<Vec<lsp_types::Diagnostic>, Box<dyn Error>> {
-    eprintln!("Parsing diagnostics from: {}", err);
-    let mut vec = Vec::<lsp_types::Diagnostic>::new();
+fn get_diagnostics(err: &dyn Error) -> Result<Vec<Diagnostic>, Box<dyn Error>> {
+    let mut vec = Vec::<Diagnostic>::new();
     for diag in err.to_string().lines().map(|l| parse_diag_pure(l)) {
         vec.push(diag?);
     }
-    eprintln!("Returning diagnostics {:?}", vec);
     Ok(vec)
 }
 
-fn main_loop(
-    connection: Connection,
-    params: serde_json::Value,
-) -> Result<(), Box<dyn Error + Sync + Send>> {
+fn main_loop(connection: Connection, params: serde_json::Value) -> Result<(), Box<dyn Error>> {
     let _params: InitializeParams = serde_json::from_value(params).unwrap();
-    eprintln!("Starting example main loop");
     for msg in &connection.receiver {
-        eprintln!("Got msg: {msg:?}");
         match msg {
             Message::Request(req) => {
                 if connection.handle_shutdown(&req)? {
                     return Ok(());
                 }
-                eprintln!("Got request: {req:?}");
                 match cast::<GotoDefinition>(req) {
-                    Ok((id, params)) => {
-                        eprintln!("got gotoDefinition request #{id}: {params:?}");
+                    Ok((id, _)) => {
                         let result = Some(GotoDefinitionResponse::Array(Vec::new()));
                         let result = serde_json::to_value(&result).unwrap();
                         let resp = Response {
@@ -125,27 +122,22 @@ fn main_loop(
                 };
                 // ...
             }
-            Message::Response(resp) => {
-                eprintln!("got response: {resp:?}");
-            }
-            Message::Notification(not) => {
-                eprintln!("got notification: {not:?}");
-                match notification::<lsp_types::notification::DidOpenTextDocument>(not) {
-                    Ok(params) => {
-                        eprintln!("Got DidOpenTextDocument: {params:?}");
-                        match on_open(params) {
-                            Ok(Some(resp)) => {
-                                connection.sender.send(Message::Notification(resp))?
-                            }
-                            Ok(None) => {}
-                            Err(err) => eprintln!("DidOpenTextDocument error: {err:?}"),
-                        }
-                    }
-                    Err(err) => {
-                        eprintln!("DidOpenTextDocument error: {err:?}");
+            Message::Response(_) => {}
+            Message::Notification(not) => match not.method.as_str() {
+                DidOpenTextDocument::METHOD => {
+                    if let Ok(params) = notification::<DidOpenTextDocument>(not) {
+                        let resp = on_open(params.text_document.uri)?;
+                        connection.sender.send(Message::Notification(resp))?;
                     }
                 }
-            }
+                DidSaveTextDocument::METHOD => {
+                    if let Ok(params) = notification::<DidSaveTextDocument>(not) {
+                        let resp = on_open(params.text_document.uri)?;
+                        connection.sender.send(Message::Notification(resp))?;
+                    }
+                }
+                _ => {}
+            },
         }
     }
     Ok(())
@@ -159,7 +151,9 @@ where
     req.extract(R::METHOD)
 }
 
-fn notification<N>(not: Notification) -> Result<N::Params, ExtractError<Notification>>
+fn notification<N>(
+    not: lsp_server::Notification,
+) -> Result<N::Params, ExtractError<lsp_server::Notification>>
 where
     N: lsp_types::notification::Notification,
     N::Params: serde::de::DeserializeOwned,
@@ -175,29 +169,26 @@ where
     String::from(N::METHOD)
 }
 
-fn on_open(
-    params: lsp_types::DidOpenTextDocumentParams,
-) -> Result<Option<Notification>, Box<dyn Error>> {
-    let uri = params.text_document.uri;
+fn on_open(uri: Url) -> Result<lsp_server::Notification, Box<dyn Error>> {
     if uri.scheme() != "file" {
         Err(format!("Unsupported scheme: {}", uri))?
     }
-    let path = uri.path();
-    match parse("") {
-        Ok(_) => Ok(None),
+    let diags = match parse(uri.path()) {
+        Ok(_) => Vec::<Diagnostic>::new(),
         Err(err) => {
             let err = err.source().ok_or("Parse error missing source")?;
-            eprintln!("Failed: {}", err);
-            let diags = get_diagnostics(err)?;
-            let result = Some(lsp_types::PublishDiagnosticsParams {
-                uri,
-                diagnostics: diags,
-                version: None,
-            });
-            Ok(Some(Notification {
-                method: method::<PublishDiagnostics>(),
-                params: serde_json::to_value(&result)?,
-            }))
+            get_diagnostics(err)?
         }
-    }
+    };
+
+    let params = lsp_types::PublishDiagnosticsParams {
+        uri,
+        diagnostics: diags,
+        version: None,
+    };
+
+    Ok(lsp_server::Notification {
+        method: method::<PublishDiagnostics>(),
+        params: serde_json::to_value(&params)?,
+    })
 }
