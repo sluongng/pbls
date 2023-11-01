@@ -1,5 +1,6 @@
-use std::io::{BufRead, BufReader, Read, Write};
-use std::{error::Error, process::Stdio};
+use protobuf::descriptor::FileDescriptorProto;
+use protobuf_parse;
+use std::error::Error;
 
 use lsp_types::{
     notification::PublishDiagnostics, request::GotoDefinition, DiagnosticSeverity,
@@ -8,112 +9,88 @@ use lsp_types::{
 
 use lsp_server::{Connection, ExtractError, Message, Notification, Request, RequestId, Response};
 
-// fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
-//     // Note that  we must have our logging only write out to stderr.
-//     eprintln!("Starting generic LSP server");
+fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    eprintln!("{}", parse("").unwrap_err().source().unwrap());
+    let (connection, io_threads) = Connection::stdio();
 
-//     let (connection, io_threads) = Connection::stdio();
+    let server_capabilities = serde_json::to_value(&ServerCapabilities {
+        // completion_provider: Some(lsp_types::CompletionOptions::default()),
+        diagnostic_provider: Some(lsp_types::DiagnosticServerCapabilities::Options(
+            lsp_types::DiagnosticOptions {
+                identifier: Some(String::from("spelgud")),
+                ..Default::default()
+            },
+        )),
+        ..Default::default()
+    })
+    .unwrap();
+    let initialization_params = connection.initialize(server_capabilities)?;
+    main_loop(connection, initialization_params)?;
+    io_threads.join()?;
 
-//     let server_capabilities = serde_json::to_value(&ServerCapabilities {
-//         // completion_provider: Some(lsp_types::CompletionOptions::default()),
-//         diagnostic_provider: Some(lsp_types::DiagnosticServerCapabilities::Options(
-//             lsp_types::DiagnosticOptions {
-//                 identifier: Some(String::from("spelgud")),
-//                 ..Default::default()
-//             },
-//         )),
-//         ..Default::default()
-//     })
-//     .unwrap();
-//     let initialization_params = connection.initialize(server_capabilities)?;
-//     main_loop(connection, initialization_params)?;
-//     io_threads.join()?;
-
-//     eprintln!("Shutting down server");
-//     Ok(())
-// }
-
-struct Correction {
-    start: u32,
-    end: u32,
-}
-
-fn send_line(
-    input: &str,
-    writer: &mut std::process::ChildStdin,
-    reader: &mut BufReader<std::process::ChildStdout>,
-) -> Result<String, Box<dyn Error>> {
-    eprint!("Sending to aspell: {}", input);
-    writer.write(input.as_bytes())?;
-    for line in reader.lines() {
-        let ln = line?;
-        eprintln!("Got {}", ln);
-        if ln.is_empty() {
-            return Ok(String::new());
-        }
-
-        let mut splits = ln.split_whitespace();
-        match splits.next() {
-            Some("&") => {
-                // & badword suggestion_count offset: suggestion1, suggestion2, ...
-                let word = splits.next().unwrap();
-
-                // skip suggestion count
-                if splits.next().is_none() {
-                    Err("Early end of line")?
-                }
-
-                let offset = splits
-                    .next()
-                    .unwrap()
-                    .to_string()
-                    .strip_suffix(":")
-                    .unwrap()
-                    .parse::<u32>()?;
-                eprintln!("Got mispell word:{} offset:{}", word, offset);
-            }
-            Some(sym) => {
-                Err(format!("Unexpected aspell prefix: {}", sym))?;
-            }
-            None => {
-                return Ok(String::new());
-            }
-        }
-    }
-    Ok(String::new())
-}
-
-fn main() -> Result<(), Box<dyn Error>> {
-    let mut aspell = std::process::Command::new("aspell")
-        .arg("pipe")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()?;
-    eprintln!("Started aspell with pid {}", aspell.id());
-    // let mut stdin = aspell.stdin.take().expect("Failed to open stdin");
-    // let mut stdout = aspell.stdout.take().expect("Failed to open stdin");
-    let mut stdin = aspell.stdin.take().unwrap();
-    let stdout = aspell.stdout.take().unwrap();
-    let mut reader = BufReader::new(stdout);
-
-    // put aspell into "terse" mode, so it does not send "*" for correct words
-    stdin.write_all("!\n".as_bytes())?;
-
-    // first line from aspell is version info
-    let mut intro = String::new();
-    reader.read_line(&mut intro)?;
-    eprintln!("aspell: {}", intro);
-
-    {
-        let res = send_line("henlo hai world world\n", &mut stdin, &mut reader)?;
-        eprintln!("read '{}'", res);
-    }
-    {
-        let res = send_line("wurld\n", &mut stdin, &mut reader)?;
-        eprintln!("read '{}'", res);
-    }
-
+    eprintln!("Shutting down server");
     Ok(())
+}
+
+fn parse(path: &str) -> Result<Vec<FileDescriptorProto>, Box<dyn Error>> {
+    let mut parser = protobuf_parse::Parser::new();
+    parser.pure();
+    parser.capture_stderr();
+    parser.input("./example.proto");
+    parser.include(".");
+    Ok(parser.file_descriptor_set()?.file)
+}
+
+// Parse a single error line from the pure parser into a diagnostic.
+// Error lines look like:
+// error in `./example.proto`: at 4:13: label required
+fn parse_diag_pure(line: &str) -> Result<lsp_types::Diagnostic, Box<dyn Error>> {
+    let line = line
+        .strip_prefix("error in")
+        .ok_or(format!("Unexpected error line prefix: {}", line))?;
+    let mut parts = line.split(":");
+    let _ = parts
+        .next()
+        .ok_or(format!("Error line missing filename: {}", line))?
+        .trim_matches('`');
+    let lineno = parts
+        .next()
+        .ok_or(format!("Error line missing line number: {}", line))?
+        .strip_prefix(" at ")
+        .ok_or(format!("Error line missing location prefix: {}", line))?
+        .parse::<u32>()?;
+    let colno = parts
+        .next()
+        .ok_or(format!("Error line missing column number: {}", line))?
+        .parse::<u32>()?;
+    let msg = parts.next().ok_or("Error line missing message")?;
+    eprintln!("Parsed: line={}, col={}, msg={}", lineno, colno, msg);
+    Ok(lsp_types::Diagnostic {
+        range: Range {
+            start: lsp_types::Position {
+                line: lineno - 1,
+                character: 0,
+            },
+            end: lsp_types::Position {
+                line: lineno - 1,
+                character: line.len().try_into()?,
+            },
+        },
+        severity: Some(DiagnosticSeverity::ERROR),
+        source: Some(String::from("pbls")),
+        message: msg.into(),
+        ..Default::default()
+    })
+}
+
+fn get_diagnostics(err: &dyn Error) -> Result<Vec<lsp_types::Diagnostic>, Box<dyn Error>> {
+    eprintln!("Parsing diagnostics from: {}", err);
+    let mut vec = Vec::<lsp_types::Diagnostic>::new();
+    for diag in err.to_string().lines().map(|l| parse_diag_pure(l)) {
+        vec.push(diag?);
+    }
+    eprintln!("Returning diagnostics {:?}", vec);
+    Ok(vec)
 }
 
 fn main_loop(
@@ -157,7 +134,10 @@ fn main_loop(
                     Ok(params) => {
                         eprintln!("Got DidOpenTextDocument: {params:?}");
                         match on_open(params) {
-                            Ok(resp) => connection.sender.send(Message::Notification(resp))?,
+                            Ok(Some(resp)) => {
+                                connection.sender.send(Message::Notification(resp))?
+                            }
+                            Ok(None) => {}
                             Err(err) => eprintln!("DidOpenTextDocument error: {err:?}"),
                         }
                     }
@@ -195,30 +175,29 @@ where
     String::from(N::METHOD)
 }
 
-fn on_open(params: lsp_types::DidOpenTextDocumentParams) -> Result<Notification, Box<dyn Error>> {
-    let diags = vec![lsp_types::Diagnostic {
-        range: Range {
-            start: lsp_types::Position {
-                line: 0,
-                character: 0,
-            },
-            end: lsp_types::Position {
-                line: 0,
-                character: 10,
-            },
-        },
-        severity: Some(DiagnosticSeverity::ERROR),
-        source: Some(String::from("spell")),
-        message: String::from("misspelling"),
-        ..Default::default()
-    }];
-    let result = Some(lsp_types::PublishDiagnosticsParams {
-        uri: params.text_document.uri,
-        diagnostics: diags,
-        version: None,
-    });
-    Ok(Notification {
-        method: method::<PublishDiagnostics>(),
-        params: serde_json::to_value(&result)?,
-    })
+fn on_open(
+    params: lsp_types::DidOpenTextDocumentParams,
+) -> Result<Option<Notification>, Box<dyn Error>> {
+    let uri = params.text_document.uri;
+    if uri.scheme() != "file" {
+        Err(format!("Unsupported scheme: {}", uri))?
+    }
+    let path = uri.path();
+    match parse("") {
+        Ok(_) => Ok(None),
+        Err(err) => {
+            let err = err.source().ok_or("Parse error missing source")?;
+            eprintln!("Failed: {}", err);
+            let diags = get_diagnostics(err)?;
+            let result = Some(lsp_types::PublishDiagnosticsParams {
+                uri,
+                diagnostics: diags,
+                version: None,
+            });
+            Ok(Some(Notification {
+                method: method::<PublishDiagnostics>(),
+                params: serde_json::to_value(&result)?,
+            }))
+        }
+    }
 }
