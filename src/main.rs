@@ -1,15 +1,14 @@
+use lsp_types::request::DocumentSymbolRequest;
+use lsp_types::{DocumentSymbolResponse, Location, OneOf, Position, SymbolInformation, SymbolKind};
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf_parse;
-use std::fs;
 use std::{error::Error, path};
-use std::{fs::File, io::Write};
 
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
-    request::GotoDefinition,
-    Diagnostic, DiagnosticServerCapabilities, DiagnosticSeverity, GotoDefinitionResponse,
-    InitializeParams, Range, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Url,
+    Diagnostic, DiagnosticServerCapabilities, DiagnosticSeverity, InitializeParams, Range,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, Url,
 };
 
 use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response};
@@ -18,6 +17,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (connection, io_threads) = Connection::stdio();
 
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
+        document_symbol_provider: Some(OneOf::Left(true)),
         text_document_sync: Some(TextDocumentSyncCapability::Options(
             TextDocumentSyncOptions {
                 save: Some(TextDocumentSyncSaveOptions::Supported(true)),
@@ -101,10 +101,29 @@ fn main_loop(connection: Connection, params: serde_json::Value) -> Result<(), Bo
                 if connection.handle_shutdown(&req)? {
                     return Ok(());
                 }
-                match cast::<GotoDefinition>(req) {
-                    Ok((id, _)) => {
-                        let result = Some(GotoDefinitionResponse::Array(Vec::new()));
-                        let result = serde_json::to_value(&result).unwrap();
+                match cast::<DocumentSymbolRequest>(req) {
+                    Ok((id, params)) => {
+                        let result = Some(DocumentSymbolResponse::Flat(vec![SymbolInformation {
+                            name: "Thingy".into(),
+                            kind: SymbolKind::STRUCT,
+                            location: Location {
+                                uri: params.text_document.uri,
+                                range: Range {
+                                    start: Position {
+                                        line: 3,
+                                        character: 0,
+                                    },
+                                    end: Position {
+                                        line: 3,
+                                        character: 0,
+                                    },
+                                },
+                            },
+                            tags: None,
+                            deprecated: None,
+                            container_name: None,
+                        }]));
+                        let result = serde_json::to_value(&result)?;
                         let resp = Response {
                             id,
                             result: Some(result),
@@ -116,7 +135,6 @@ fn main_loop(connection: Connection, params: serde_json::Value) -> Result<(), Bo
                     Err(err @ ExtractError::JsonError { .. }) => panic!("{err:?}"),
                     Err(ExtractError::MethodMismatch(req)) => req,
                 };
-                // ...
             }
             Message::Response(_) => {}
             Message::Notification(not) => match not.method.as_str() {
