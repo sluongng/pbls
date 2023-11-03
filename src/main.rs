@@ -1,6 +1,8 @@
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf_parse;
+use std::fs;
 use std::{error::Error, path};
+use std::{fs::File, io::Write};
 
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
@@ -41,36 +43,29 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn parse(path: &str) -> Result<Vec<FileDescriptorProto>, Box<dyn Error>> {
     let mut parser = protobuf_parse::Parser::new();
-    parser.pure();
+    // The protoc parser gives more useful and consistent error messages
+    parser.protoc();
     parser.capture_stderr();
-    parser.input(path);
+    parser.input(path::Path::new(path).canonicalize()?);
     parser.include(path::Path::new(".").canonicalize()?);
     Ok(parser.file_descriptor_set()?.file)
 }
 
-// Parse a single error line from the pure parser into a diagnostic.
+// Parse a single error line from the protoc parser into a diagnostic.
 // Error lines look like:
-// error in `./example.proto`: at 4:13: label required
-fn parse_diag_pure(line: &str) -> Result<lsp_types::Diagnostic, Box<dyn Error>> {
-    let line = line
-        .strip_prefix("error in")
-        .ok_or(format!("Unexpected error line prefix: {}", line))?;
-    let mut parts = line.split(":");
-    let _ = parts
-        .next()
-        .ok_or(format!("Error line missing filename: {}", line))?
-        .trim_matches('`');
-    let lineno = parts
-        .next()
-        .ok_or(format!("Error line missing line number: {}", line))?
-        .strip_prefix(" at ")
-        .ok_or(format!("Error line missing location prefix: {}", line))?
-        .parse::<u32>()?;
-    let _colno = parts
-        .next()
-        .ok_or(format!("Error line missing column number: {}", line))?
-        .parse::<u32>()?;
-    let msg = parts.next().ok_or("Error line missing message")?;
+// "/usr/bin/protoc" "-I/home/rcorre/src/pbls" ... "--include_imports" "/home/rcorre/src/pbls/foo.proto"", "foo.proto:4:13: "int" is not defined".
+fn parse_diag(line: &str) -> Result<lsp_types::Diagnostic, Box<dyn Error>> {
+    let (_, rest) = line.split_once(".proto:").ok_or("Failed to parse error")?;
+    let (linestr, rest) = rest
+        .split_once(':')
+        .ok_or("Failed to parse line number from error")?;
+    let (_, msg) = rest
+        .split_once(':')
+        .ok_or("Failed to parse message from error")?;
+    let msg = msg.strip_suffix(".\"").unwrap_or(msg).replace("\\\"", "\"");
+
+    let lineno = linestr.parse::<u32>()?;
+
     Ok(lsp_types::Diagnostic {
         range: Range {
             start: lsp_types::Position {
@@ -91,7 +86,8 @@ fn parse_diag_pure(line: &str) -> Result<lsp_types::Diagnostic, Box<dyn Error>> 
 
 fn get_diagnostics(err: &dyn Error) -> Result<Vec<Diagnostic>, Box<dyn Error>> {
     let mut vec = Vec::<Diagnostic>::new();
-    for diag in err.to_string().lines().map(|l| parse_diag_pure(l)) {
+    // Errors are delineated by literal \n.
+    for diag in err.to_string().split("\\n").map(|l| parse_diag(l)) {
         vec.push(diag?);
     }
     Ok(vec)
