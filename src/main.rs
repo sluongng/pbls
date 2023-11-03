@@ -1,6 +1,6 @@
 use lsp_types::request::DocumentSymbolRequest;
 use lsp_types::{DocumentSymbolResponse, Location, OneOf, Position, SymbolInformation, SymbolKind};
-use protobuf::descriptor::FileDescriptorProto;
+use protobuf::descriptor::{source_code_info, DescriptorProto, FileDescriptorProto};
 use protobuf_parse;
 use std::{error::Error, path};
 
@@ -45,6 +45,7 @@ fn parse(path: &str) -> Result<Vec<FileDescriptorProto>, Box<dyn Error>> {
     let mut parser = protobuf_parse::Parser::new();
     // The protoc parser gives more useful and consistent error messages
     parser.protoc();
+    parser.protoc_extra_args(vec!["--include_source_info"]);
     parser.capture_stderr();
     parser.input(path::Path::new(path).canonicalize()?);
     parser.include(path::Path::new(".").canonicalize()?);
@@ -93,6 +94,70 @@ fn get_diagnostics(err: &dyn Error) -> Result<Vec<Diagnostic>, Box<dyn Error>> {
     Ok(vec)
 }
 
+fn message_to_symbolinfo(
+    uri: Url,
+    msg: &DescriptorProto,
+    loc: &source_code_info::Location,
+) -> SymbolInformation {
+    eprintln!("syminfo {} {}", msg, loc);
+    let start = Position {
+        line: loc.span[0].try_into().unwrap(),
+        character: loc.span[1].try_into().unwrap(),
+    };
+    let end = Position {
+        line: loc.span[2].try_into().unwrap(),
+        character: loc.span[3].try_into().unwrap(),
+    };
+    // deprecated field is deprecated, but cannot be omitted
+    #[allow(deprecated)]
+    SymbolInformation {
+        // TODO: no clone
+        name: msg.name.clone().unwrap_or("Unknown".into()),
+        kind: SymbolKind::STRUCT,
+        location: Location {
+            uri,
+            range: Range { start, end },
+        },
+        tags: None,
+        deprecated: None,
+        container_name: None,
+    }
+}
+
+fn location_to_message_index(loc: &source_code_info::Location) -> Option<usize> {
+    // See https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L1097-L1120
+    // If the first index is 4, it's a message
+    // The next index is the message number
+    match loc.path[..] {
+        [4, idx] => Some(idx.try_into().ok()?),
+        _ => None,
+    }
+}
+
+fn get_symbols(uri: Url) -> Result<DocumentSymbolResponse, Box<dyn Error>> {
+    let parsed = parse(uri.path())?;
+    let first = parsed.first().ok_or("No info")?;
+    eprintln!(
+        "messages={:?}, locations={:?}",
+        first.message_type, first.source_code_info
+    );
+    Ok(DocumentSymbolResponse::Flat(
+        first
+            .source_code_info
+            .location
+            .iter()
+            .filter_map(|loc| match location_to_message_index(loc) {
+                Some(idx) => Some((loc, idx)),
+                None => None,
+            })
+            .filter_map(|(loc, idx)| match first.message_type.get(idx) {
+                Some(msg) => Some(message_to_symbolinfo(uri.clone(), msg, loc)),
+                None => None,
+            })
+            .collect(),
+    ))
+}
+
 fn main_loop(connection: Connection, params: serde_json::Value) -> Result<(), Box<dyn Error>> {
     let _params: InitializeParams = serde_json::from_value(params).unwrap();
     for msg in &connection.receiver {
@@ -103,26 +168,7 @@ fn main_loop(connection: Connection, params: serde_json::Value) -> Result<(), Bo
                 }
                 match cast::<DocumentSymbolRequest>(req) {
                     Ok((id, params)) => {
-                        let result = Some(DocumentSymbolResponse::Flat(vec![SymbolInformation {
-                            name: "Thingy".into(),
-                            kind: SymbolKind::STRUCT,
-                            location: Location {
-                                uri: params.text_document.uri,
-                                range: Range {
-                                    start: Position {
-                                        line: 3,
-                                        character: 0,
-                                    },
-                                    end: Position {
-                                        line: 3,
-                                        character: 0,
-                                    },
-                                },
-                            },
-                            tags: None,
-                            deprecated: None,
-                            container_name: None,
-                        }]));
+                        let result = Some(get_symbols(params.text_document.uri)?);
                         let result = serde_json::to_value(&result)?;
                         let resp = Response {
                             id,
