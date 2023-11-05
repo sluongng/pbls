@@ -7,6 +7,8 @@ use std::{error::Error, path};
 // Field numbers from https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L100-L101
 const MESSAGE_TYPE: i32 = 4;
 const ENUM_TYPE: i32 = 5;
+const NESTED_MESSAGE_TYPE: i32 = 3;
+const NESTED_ENUM_TYPE: i32 = 4;
 
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
@@ -106,6 +108,24 @@ fn location_to_symbol(
     // See https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L1097-L1120
     // The first element is the type, followed by the index of that type in the descriptor.
     let (name, kind) = match loc.path[..] {
+        [MESSAGE_TYPE, idx, NESTED_MESSAGE_TYPE, subidx] => (
+            fd.message_type
+                .get(usize::try_from(idx).ok()?)?
+                .nested_type
+                .get(usize::try_from(subidx).ok()?)?
+                .name
+                .clone(),
+            SymbolKind::STRUCT,
+        ),
+        [MESSAGE_TYPE, idx, NESTED_ENUM_TYPE, subidx] => (
+            fd.message_type
+                .get(usize::try_from(idx).ok()?)?
+                .enum_type
+                .get(usize::try_from(subidx).ok()?)?
+                .name
+                .clone(),
+            SymbolKind::ENUM,
+        ),
         [MESSAGE_TYPE, idx] => (
             fd.message_type
                 .get(usize::try_from(idx).ok()?)?
