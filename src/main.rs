@@ -59,21 +59,20 @@ fn parse(path: &str) -> Result<Vec<FileDescriptorProto>, Box<dyn Error>> {
 }
 
 // Parse a single error line from the protoc parser into a diagnostic.
-// Error lines look like:
-// "/usr/bin/protoc" "-I/home/rcorre/src/pbls" ... "--include_imports" "/home/rcorre/src/pbls/foo.proto"", "foo.proto:4:13: "int" is not defined".
-fn parse_diag(line: &str) -> Result<lsp_types::Diagnostic, Box<dyn Error>> {
-    let (_, rest) = line.split_once(".proto:").ok_or("Failed to parse error")?;
-    let (linestr, rest) = rest
-        .split_once(':')
-        .ok_or("Failed to parse line number from error")?;
-    let (_, msg) = rest
-        .split_once(':')
-        .ok_or("Failed to parse message from error")?;
+// Usually each error has a line containing a location, like:
+// foo.proto:4:13: "int" is not defined
+// Other lines do not contain location info.
+// We'll return None to skip these, as usually another line contains the location.
+fn parse_diag(line: &str) -> Option<lsp_types::Diagnostic> {
+    //
+    let (_, rest) = line.split_once(".proto:")?;
+    let (linestr, rest) = rest.split_once(':')?;
+    let (_, msg) = rest.split_once(':')?;
     let msg = msg.strip_suffix(".\"").unwrap_or(msg).replace("\\\"", "\"");
 
-    let lineno = linestr.parse::<u32>()?;
+    let lineno = linestr.parse::<u32>().unwrap();
 
-    Ok(lsp_types::Diagnostic {
+    Some(lsp_types::Diagnostic {
         range: Range {
             start: lsp_types::Position {
                 line: lineno - 1,
@@ -81,7 +80,7 @@ fn parse_diag(line: &str) -> Result<lsp_types::Diagnostic, Box<dyn Error>> {
             },
             end: lsp_types::Position {
                 line: lineno - 1,
-                character: line.len().try_into()?,
+                character: line.len().try_into().unwrap(),
             },
         },
         severity: Some(DiagnosticSeverity::ERROR),
@@ -94,8 +93,8 @@ fn parse_diag(line: &str) -> Result<lsp_types::Diagnostic, Box<dyn Error>> {
 fn get_diagnostics(err: &dyn Error) -> Result<Vec<Diagnostic>, Box<dyn Error>> {
     let mut vec = Vec::<Diagnostic>::new();
     // Errors are delineated by literal \n.
-    for diag in err.to_string().split("\\n").map(|l| parse_diag(l)) {
-        vec.push(diag?);
+    for diag in err.to_string().split("\\n").filter_map(|l| parse_diag(l)) {
+        vec.push(diag);
     }
     Ok(vec)
 }
@@ -236,12 +235,21 @@ fn main_loop(connection: Connection, params: serde_json::Value) -> Result<(), Bo
                 }
                 match cast::<DocumentSymbolRequest>(req) {
                     Ok((id, params)) => {
-                        let result = Some(get_symbols(params.text_document.uri)?);
-                        let result = serde_json::to_value(&result)?;
-                        let resp = Response {
-                            id,
-                            result: Some(result),
-                            error: None,
+                        let resp = match get_symbols(params.text_document.uri) {
+                            Ok(result) => Response {
+                                id,
+                                result: Some(serde_json::to_value(&result)?),
+                                error: None,
+                            },
+                            Err(err) => Response {
+                                id,
+                                result: None,
+                                error: Some(lsp_server::ResponseError {
+                                    code: lsp_server::ErrorCode::InternalError as i32,
+                                    message: err.to_string(),
+                                    data: None,
+                                }),
+                            },
                         };
                         connection.sender.send(Message::Response(resp))?;
                         continue;
