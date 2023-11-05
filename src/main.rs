@@ -100,6 +100,60 @@ fn get_diagnostics(err: &dyn Error) -> Result<Vec<Diagnostic>, Box<dyn Error>> {
     Ok(vec)
 }
 
+fn location_to_name_kind_nested(
+    path: &[i32],
+    proto: &DescriptorProto,
+) -> Option<(String, SymbolKind)> {
+    match path {
+        [NESTED_ENUM_TYPE, idx] => Some((
+            proto
+                .enum_type
+                .get(usize::try_from(*idx).ok()?)?
+                .name
+                .clone()?,
+            SymbolKind::ENUM,
+        )),
+        [NESTED_MESSAGE_TYPE, idx] => Some((
+            proto
+                .nested_type
+                .get(usize::try_from(*idx).ok()?)?
+                .name
+                .clone()?,
+            SymbolKind::STRUCT,
+        )),
+        [NESTED_MESSAGE_TYPE, idx, tail @ ..] => {
+            location_to_name_kind_nested(tail, proto.nested_type.get(usize::try_from(*idx).ok()?)?)
+        }
+        _ => None,
+    }
+}
+
+fn location_to_name_kind(path: &[i32], fd: &FileDescriptorProto) -> Option<(String, SymbolKind)> {
+    match path {
+        // top-level enum
+        [ENUM_TYPE, idx] => Some((
+            fd.enum_type
+                .get(usize::try_from(*idx).ok()?)?
+                .name
+                .clone()?,
+            SymbolKind::ENUM,
+        )),
+        // top-level message
+        [MESSAGE_TYPE, idx] => Some((
+            fd.message_type
+                .get(usize::try_from(*idx).ok()?)?
+                .name
+                .clone()?,
+            SymbolKind::STRUCT,
+        )),
+        // nested type
+        [MESSAGE_TYPE, idx, tail @ ..] => {
+            location_to_name_kind_nested(&tail, fd.message_type.get(usize::try_from(*idx).ok()?)?)
+        }
+        _ => None,
+    }
+}
+
 fn location_to_symbol(
     uri: Url,
     loc: &source_code_info::Location,
@@ -107,40 +161,7 @@ fn location_to_symbol(
 ) -> Option<SymbolInformation> {
     // See https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L1097-L1120
     // The first element is the type, followed by the index of that type in the descriptor.
-    let (name, kind) = match loc.path[..] {
-        [MESSAGE_TYPE, idx, NESTED_MESSAGE_TYPE, subidx] => (
-            fd.message_type
-                .get(usize::try_from(idx).ok()?)?
-                .nested_type
-                .get(usize::try_from(subidx).ok()?)?
-                .name
-                .clone(),
-            SymbolKind::STRUCT,
-        ),
-        [MESSAGE_TYPE, idx, NESTED_ENUM_TYPE, subidx] => (
-            fd.message_type
-                .get(usize::try_from(idx).ok()?)?
-                .enum_type
-                .get(usize::try_from(subidx).ok()?)?
-                .name
-                .clone(),
-            SymbolKind::ENUM,
-        ),
-        [MESSAGE_TYPE, idx] => (
-            fd.message_type
-                .get(usize::try_from(idx).ok()?)?
-                .name
-                .clone(),
-            SymbolKind::STRUCT,
-        ),
-        [ENUM_TYPE, idx] => (
-            fd.enum_type.get(usize::try_from(idx).ok()?)?.name.clone(),
-            SymbolKind::ENUM,
-        ),
-        _ => {
-            return None;
-        }
-    };
+    let (name, kind) = location_to_name_kind(&loc.path[..], fd)?;
     let start = Position {
         line: loc.span[0].try_into().unwrap(),
         character: loc.span[1].try_into().unwrap(),
@@ -153,8 +174,7 @@ fn location_to_symbol(
     // deprecated field is deprecated, but cannot be omitted
     #[allow(deprecated)]
     Some(SymbolInformation {
-        // TODO: no clone
-        name: name.clone().unwrap_or("Unknown".into()),
+        name,
         kind,
         location: Location {
             uri: uri.clone(),
