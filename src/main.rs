@@ -110,7 +110,8 @@ fn location_to_name_kind_nested(
                 .enum_type
                 .get(usize::try_from(*idx).ok()?)?
                 .name
-                .clone()?,
+                .clone()
+                .unwrap_or("<EnumMissingName>".into()),
             SymbolKind::ENUM,
         )),
         [NESTED_MESSAGE_TYPE, idx] => Some((
@@ -122,7 +123,17 @@ fn location_to_name_kind_nested(
             SymbolKind::STRUCT,
         )),
         [NESTED_MESSAGE_TYPE, idx, tail @ ..] => {
-            location_to_name_kind_nested(tail, proto.nested_type.get(usize::try_from(*idx).ok()?)?)
+            let parent_name = proto
+                .nested_type
+                .get(usize::try_from(*idx).ok()?)?
+                .name
+                .clone()
+                .unwrap_or("<MessageMissingName>".into());
+            let (name, kind) = location_to_name_kind_nested(
+                tail,
+                proto.nested_type.get(usize::try_from(*idx).ok()?)?,
+            )?;
+            Some((parent_name + "." + &name, kind))
         }
         _ => None,
     }
@@ -135,7 +146,8 @@ fn location_to_name_kind(path: &[i32], fd: &FileDescriptorProto) -> Option<(Stri
             fd.enum_type
                 .get(usize::try_from(*idx).ok()?)?
                 .name
-                .clone()?,
+                .clone()
+                .unwrap_or("<EnumMissingName>".into()),
             SymbolKind::ENUM,
         )),
         // top-level message
@@ -143,12 +155,23 @@ fn location_to_name_kind(path: &[i32], fd: &FileDescriptorProto) -> Option<(Stri
             fd.message_type
                 .get(usize::try_from(*idx).ok()?)?
                 .name
-                .clone()?,
+                .clone()
+                .unwrap_or("<MessageMissingName>".into()),
             SymbolKind::STRUCT,
         )),
         // nested type
         [MESSAGE_TYPE, idx, tail @ ..] => {
-            location_to_name_kind_nested(&tail, fd.message_type.get(usize::try_from(*idx).ok()?)?)
+            let parent_name = fd
+                .message_type
+                .get(usize::try_from(*idx).ok()?)?
+                .name
+                .clone()
+                .unwrap_or("<MessageMissingName>".into());
+            let (name, kind) = location_to_name_kind_nested(
+                &tail,
+                fd.message_type.get(usize::try_from(*idx).ok()?)?,
+            )?;
+            Some((parent_name + "." + &name, kind))
         }
         _ => None,
     }
