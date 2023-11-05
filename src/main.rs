@@ -4,6 +4,10 @@ use protobuf::descriptor::{source_code_info, DescriptorProto, FileDescriptorProt
 use protobuf_parse;
 use std::{error::Error, path};
 
+// Field numbers from https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L100-L101
+const MESSAGE_TYPE: i32 = 4;
+const ENUM_TYPE: i32 = 5;
+
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
     Diagnostic, DiagnosticServerCapabilities, DiagnosticSeverity, InitializeParams, Range,
@@ -94,12 +98,29 @@ fn get_diagnostics(err: &dyn Error) -> Result<Vec<Diagnostic>, Box<dyn Error>> {
     Ok(vec)
 }
 
-fn message_to_symbolinfo(
+fn location_to_symbol(
     uri: Url,
-    msg: &DescriptorProto,
     loc: &source_code_info::Location,
-) -> SymbolInformation {
-    eprintln!("syminfo {} {}", msg, loc);
+    fd: &FileDescriptorProto,
+) -> Option<SymbolInformation> {
+    // See https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L1097-L1120
+    // The first element is the type, followed by the index of that type in the descriptor.
+    let (name, kind) = match loc.path[..] {
+        [MESSAGE_TYPE, idx] => (
+            fd.message_type
+                .get(usize::try_from(idx).ok()?)?
+                .name
+                .clone(),
+            SymbolKind::STRUCT,
+        ),
+        [ENUM_TYPE, idx] => (
+            fd.enum_type.get(usize::try_from(idx).ok()?)?.name.clone(),
+            SymbolKind::ENUM,
+        ),
+        _ => {
+            return None;
+        }
+    };
     let start = Position {
         line: loc.span[0].try_into().unwrap(),
         character: loc.span[1].try_into().unwrap(),
@@ -108,30 +129,21 @@ fn message_to_symbolinfo(
         line: loc.span[2].try_into().unwrap(),
         character: loc.span[3].try_into().unwrap(),
     };
+
     // deprecated field is deprecated, but cannot be omitted
     #[allow(deprecated)]
-    SymbolInformation {
+    Some(SymbolInformation {
         // TODO: no clone
-        name: msg.name.clone().unwrap_or("Unknown".into()),
-        kind: SymbolKind::STRUCT,
+        name: name.clone().unwrap_or("Unknown".into()),
+        kind,
         location: Location {
-            uri,
+            uri: uri.clone(),
             range: Range { start, end },
         },
         tags: None,
         deprecated: None,
         container_name: None,
-    }
-}
-
-fn location_to_message_index(loc: &source_code_info::Location) -> Option<usize> {
-    // See https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L1097-L1120
-    // If the first index is 4, it's a message
-    // The next index is the message number
-    match loc.path[..] {
-        [4, idx] => Some(idx.try_into().ok()?),
-        _ => None,
-    }
+    })
 }
 
 fn get_symbols(uri: Url) -> Result<DocumentSymbolResponse, Box<dyn Error>> {
@@ -146,14 +158,7 @@ fn get_symbols(uri: Url) -> Result<DocumentSymbolResponse, Box<dyn Error>> {
             .source_code_info
             .location
             .iter()
-            .filter_map(|loc| match location_to_message_index(loc) {
-                Some(idx) => Some((loc, idx)),
-                None => None,
-            })
-            .filter_map(|(loc, idx)| match first.message_type.get(idx) {
-                Some(msg) => Some(message_to_symbolinfo(uri.clone(), msg, loc)),
-                None => None,
-            })
+            .filter_map(|loc| location_to_symbol(uri.clone(), loc, first))
             .collect(),
     ))
 }
