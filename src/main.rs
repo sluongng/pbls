@@ -2,13 +2,8 @@ use lsp_types::request::DocumentSymbolRequest;
 use lsp_types::{DocumentSymbolResponse, Location, OneOf, Position, SymbolInformation, SymbolKind};
 use protobuf::descriptor::{source_code_info, DescriptorProto, FileDescriptorProto};
 use protobuf_parse;
+use std::fs;
 use std::{error::Error, path};
-
-// Field numbers from https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L100-L101
-const MESSAGE_TYPE: i32 = 4;
-const ENUM_TYPE: i32 = 5;
-const NESTED_MESSAGE_TYPE: i32 = 3;
-const NESTED_ENUM_TYPE: i32 = 4;
 
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
@@ -19,7 +14,25 @@ use lsp_types::{
 
 use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response};
 
+// Field numbers from https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L100-L101
+const MESSAGE_TYPE: i32 = 4;
+const ENUM_TYPE: i32 = 5;
+const NESTED_MESSAGE_TYPE: i32 = 3;
+const NESTED_ENUM_TYPE: i32 = 4;
+
+#[derive(Debug, serde::Deserialize, Default)]
+struct Config {
+    proto_paths: Vec<String>,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
+    let conf = if let Ok(s) = fs::read_to_string(".pbls.toml") {
+        toml::from_str(s.as_str())?
+    } else {
+        Config::default()
+    };
+    eprintln!("Using config {:?}", conf);
+
     let (connection, io_threads) = Connection::stdio();
 
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
@@ -41,20 +54,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     })
     .unwrap();
     let initialization_params = connection.initialize(server_capabilities)?;
-    main_loop(connection, initialization_params)?;
+    main_loop(connection, initialization_params, conf)?;
     io_threads.join()?;
 
     Ok(())
 }
 
-fn parse(path: &str) -> Result<Vec<FileDescriptorProto>, Box<dyn Error>> {
+fn parse(path: &str, conf: &Config) -> Result<Vec<FileDescriptorProto>, Box<dyn Error>> {
     let mut parser = protobuf_parse::Parser::new();
     // The protoc parser gives more useful and consistent error messages
     parser.protoc();
     parser.protoc_extra_args(vec!["--include_source_info"]);
     parser.capture_stderr();
     parser.input(path::Path::new(path).canonicalize()?);
-    parser.include(path::Path::new(".").canonicalize()?);
+    parser.includes(
+        conf.proto_paths
+            .iter()
+            .map(|p| path::Path::new(p).canonicalize().unwrap()),
+    );
     Ok(parser.file_descriptor_set()?.file)
 }
 
@@ -64,7 +81,7 @@ fn parse(path: &str) -> Result<Vec<FileDescriptorProto>, Box<dyn Error>> {
 // Other lines do not contain location info.
 // We'll return None to skip these, as usually another line contains the location.
 fn parse_diag(line: &str) -> Option<lsp_types::Diagnostic> {
-    //
+    eprintln!("Parsing diag {line}");
     let (_, rest) = line.split_once(".proto:")?;
     let (linestr, rest) = rest.split_once(':')?;
     let (_, msg) = rest.split_once(':')?;
@@ -208,8 +225,8 @@ fn location_to_symbol(
     })
 }
 
-fn get_symbols(uri: Url) -> Result<DocumentSymbolResponse, Box<dyn Error>> {
-    let parsed = parse(uri.path())?;
+fn get_symbols(uri: Url, conf: &Config) -> Result<DocumentSymbolResponse, Box<dyn Error>> {
+    let parsed = parse(uri.path(), &conf)?;
     let first = parsed.first().ok_or("No info")?;
     eprintln!(
         "messages={:?}, locations={:?}",
@@ -225,7 +242,11 @@ fn get_symbols(uri: Url) -> Result<DocumentSymbolResponse, Box<dyn Error>> {
     ))
 }
 
-fn main_loop(connection: Connection, params: serde_json::Value) -> Result<(), Box<dyn Error>> {
+fn main_loop(
+    connection: Connection,
+    params: serde_json::Value,
+    conf: Config,
+) -> Result<(), Box<dyn Error>> {
     let _params: InitializeParams = serde_json::from_value(params).unwrap();
     for msg in &connection.receiver {
         match msg {
@@ -235,7 +256,7 @@ fn main_loop(connection: Connection, params: serde_json::Value) -> Result<(), Bo
                 }
                 match cast::<DocumentSymbolRequest>(req) {
                     Ok((id, params)) => {
-                        let resp = match get_symbols(params.text_document.uri) {
+                        let resp = match get_symbols(params.text_document.uri, &conf) {
                             Ok(result) => Response {
                                 id,
                                 result: Some(serde_json::to_value(&result)?),
@@ -262,13 +283,13 @@ fn main_loop(connection: Connection, params: serde_json::Value) -> Result<(), Bo
             Message::Notification(not) => match not.method.as_str() {
                 DidOpenTextDocument::METHOD => {
                     if let Ok(params) = notification::<DidOpenTextDocument>(not) {
-                        let resp = on_open(params.text_document.uri)?;
+                        let resp = on_open(params.text_document.uri, &conf)?;
                         connection.sender.send(Message::Notification(resp))?;
                     }
                 }
                 DidSaveTextDocument::METHOD => {
                     if let Ok(params) = notification::<DidSaveTextDocument>(not) {
-                        let resp = on_open(params.text_document.uri)?;
+                        let resp = on_open(params.text_document.uri, &conf)?;
                         connection.sender.send(Message::Notification(resp))?;
                     }
                 }
@@ -305,11 +326,11 @@ where
     String::from(N::METHOD)
 }
 
-fn on_open(uri: Url) -> Result<lsp_server::Notification, Box<dyn Error>> {
+fn on_open(uri: Url, conf: &Config) -> Result<lsp_server::Notification, Box<dyn Error>> {
     if uri.scheme() != "file" {
         Err(format!("Unsupported scheme: {}", uri))?
     }
-    let diags = match parse(uri.path()) {
+    let diags = match parse(uri.path(), conf) {
         Ok(_) => Vec::<Diagnostic>::new(),
         Err(err) => {
             let err = err.source().ok_or("Parse error missing source")?;
