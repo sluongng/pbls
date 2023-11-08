@@ -20,8 +20,13 @@ const ENUM_TYPE: i32 = 5;
 const NESTED_MESSAGE_TYPE: i32 = 3;
 const NESTED_ENUM_TYPE: i32 = 4;
 
+fn default_proto_paths() -> Vec<String> {
+    vec![".".into()]
+}
+
 #[derive(Debug, serde::Deserialize, Default)]
 struct Config {
+    #[serde(default = "default_proto_paths")]
     proto_paths: Vec<String>,
 }
 
