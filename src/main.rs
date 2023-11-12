@@ -31,14 +31,19 @@ struct Config {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let (connection, io_threads) = Connection::stdio();
+    start(connection)?;
+    io_threads.join()?;
+    Ok(())
+}
+
+fn start(connection: Connection) -> Result<(), Box<dyn Error>> {
     let conf = if let Ok(s) = fs::read_to_string(".pbls.toml") {
         toml::from_str(s.as_str())?
     } else {
         Config::default()
     };
     eprintln!("Using config {:?}", conf);
-
-    let (connection, io_threads) = Connection::stdio();
 
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -58,10 +63,59 @@ fn main() -> Result<(), Box<dyn Error>> {
         ..Default::default()
     })
     .unwrap();
-    let initialization_params = connection.initialize(server_capabilities)?;
-    main_loop(connection, initialization_params, conf)?;
-    io_threads.join()?;
 
+    let init_params = connection.initialize(server_capabilities)?;
+    let _params: InitializeParams = serde_json::from_value(init_params).unwrap();
+
+    for msg in &connection.receiver {
+        match msg {
+            Message::Request(req) => {
+                if connection.handle_shutdown(&req)? {
+                    return Ok(());
+                }
+                match cast::<DocumentSymbolRequest>(req) {
+                    Ok((id, params)) => {
+                        let resp = match get_symbols(params.text_document.uri, &conf) {
+                            Ok(result) => Response {
+                                id,
+                                result: Some(serde_json::to_value(&result)?),
+                                error: None,
+                            },
+                            Err(err) => Response {
+                                id,
+                                result: None,
+                                error: Some(lsp_server::ResponseError {
+                                    code: lsp_server::ErrorCode::InternalError as i32,
+                                    message: err.to_string(),
+                                    data: None,
+                                }),
+                            },
+                        };
+                        connection.sender.send(Message::Response(resp))?;
+                        continue;
+                    }
+                    Err(err @ ExtractError::JsonError { .. }) => panic!("{err:?}"),
+                    Err(ExtractError::MethodMismatch(req)) => req,
+                };
+            }
+            Message::Response(_) => {}
+            Message::Notification(not) => match not.method.as_str() {
+                DidOpenTextDocument::METHOD => {
+                    if let Ok(params) = notification::<DidOpenTextDocument>(not) {
+                        let resp = on_open(params.text_document.uri, &conf)?;
+                        connection.sender.send(Message::Notification(resp))?;
+                    }
+                }
+                DidSaveTextDocument::METHOD => {
+                    if let Ok(params) = notification::<DidSaveTextDocument>(not) {
+                        let resp = on_open(params.text_document.uri, &conf)?;
+                        connection.sender.send(Message::Notification(resp))?;
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
     Ok(())
 }
 
@@ -245,64 +299,6 @@ fn get_symbols(uri: Url, conf: &Config) -> Result<DocumentSymbolResponse, Box<dy
             .filter_map(|loc| location_to_symbol(uri.clone(), loc, first))
             .collect(),
     ))
-}
-
-fn main_loop(
-    connection: Connection,
-    params: serde_json::Value,
-    conf: Config,
-) -> Result<(), Box<dyn Error>> {
-    let _params: InitializeParams = serde_json::from_value(params).unwrap();
-    for msg in &connection.receiver {
-        match msg {
-            Message::Request(req) => {
-                if connection.handle_shutdown(&req)? {
-                    return Ok(());
-                }
-                match cast::<DocumentSymbolRequest>(req) {
-                    Ok((id, params)) => {
-                        let resp = match get_symbols(params.text_document.uri, &conf) {
-                            Ok(result) => Response {
-                                id,
-                                result: Some(serde_json::to_value(&result)?),
-                                error: None,
-                            },
-                            Err(err) => Response {
-                                id,
-                                result: None,
-                                error: Some(lsp_server::ResponseError {
-                                    code: lsp_server::ErrorCode::InternalError as i32,
-                                    message: err.to_string(),
-                                    data: None,
-                                }),
-                            },
-                        };
-                        connection.sender.send(Message::Response(resp))?;
-                        continue;
-                    }
-                    Err(err @ ExtractError::JsonError { .. }) => panic!("{err:?}"),
-                    Err(ExtractError::MethodMismatch(req)) => req,
-                };
-            }
-            Message::Response(_) => {}
-            Message::Notification(not) => match not.method.as_str() {
-                DidOpenTextDocument::METHOD => {
-                    if let Ok(params) = notification::<DidOpenTextDocument>(not) {
-                        let resp = on_open(params.text_document.uri, &conf)?;
-                        connection.sender.send(Message::Notification(resp))?;
-                    }
-                }
-                DidSaveTextDocument::METHOD => {
-                    if let Ok(params) = notification::<DidSaveTextDocument>(not) {
-                        let resp = on_open(params.text_document.uri, &conf)?;
-                        connection.sender.send(Message::Notification(resp))?;
-                    }
-                }
-                _ => {}
-            },
-        }
-    }
-    Ok(())
 }
 
 fn cast<R>(req: Request) -> Result<(RequestId, R::Params), ExtractError<Request>>
