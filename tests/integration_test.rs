@@ -1,10 +1,11 @@
 use lsp_server::{Connection, Message};
 use lsp_types::notification::{DidOpenTextDocument, PublishDiagnostics};
-use lsp_types::request::Shutdown;
+use lsp_types::request::{DocumentSymbolRequest, Shutdown};
 use lsp_types::{notification::Initialized, request::Initialize, InitializedParams};
 use lsp_types::{
-    Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams, InitializeParams, Position,
-    PublishDiagnosticsParams, Range, TextDocumentItem, Url,
+    Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams, DocumentSymbolParams,
+    InitializeParams, Location, Position, PublishDiagnosticsParams, Range, SymbolInformation,
+    SymbolKind, TextDocumentIdentifier, TextDocumentItem, Url,
 };
 use pbls::Result;
 use std::error::Error;
@@ -105,6 +106,7 @@ fn test_open_ok() -> pbls::Result<()> {
 
     let uri =
         Url::from_file_path(std::path::Path::new("testdata/simple.proto").canonicalize()?).unwrap();
+
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
             uri: uri.clone(),
@@ -131,6 +133,7 @@ fn test_diagnostics() -> pbls::Result<()> {
 
     let uri =
         Url::from_file_path(std::path::Path::new("testdata/error.proto").canonicalize()?).unwrap();
+
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
             uri: uri.clone(),
@@ -140,7 +143,6 @@ fn test_diagnostics() -> pbls::Result<()> {
         },
     })?;
     let diags = client.recv::<PublishDiagnostics>()?;
-
     let base_diag = Diagnostic {
         range: Range {
             start: Position {
@@ -207,6 +209,134 @@ fn test_diagnostics() -> pbls::Result<()> {
             ],
             version: None
         }
+    );
+    Ok(())
+}
+
+#[test]
+fn test_no_diagnostics() -> pbls::Result<()> {
+    let client = TestClient::new()?;
+
+    let uri =
+        Url::from_file_path(std::path::Path::new("testdata/simple.proto").canonicalize()?).unwrap();
+
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    let diags = client.recv::<PublishDiagnostics>()?;
+
+    assert_eq!(
+        diags,
+        PublishDiagnosticsParams {
+            uri,
+            diagnostics: vec![],
+            version: None
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn test_symbols() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+
+    let uri =
+        Url::from_file_path(std::path::Path::new("testdata/simple.proto").canonicalize()?).unwrap();
+
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    client.recv::<PublishDiagnostics>()?;
+
+    let syms = client.request::<DocumentSymbolRequest>(DocumentSymbolParams {
+        text_document: TextDocumentIdentifier { uri: uri.clone() },
+        work_done_progress_params: lsp_types::WorkDoneProgressParams {
+            work_done_token: None,
+        },
+        partial_result_params: lsp_types::PartialResultParams {
+            partial_result_token: None,
+        },
+    })?;
+    assert_eq!(
+        syms,
+        Some(lsp_types::DocumentSymbolResponse::Flat(vec![
+            // deprecated field is deprecated, but cannot be omitted
+            #[allow(deprecated)]
+            SymbolInformation {
+                name: "Thing".into(),
+                kind: SymbolKind::ENUM,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: uri.clone(),
+                    range: Range {
+                        start: Position {
+                            line: 4,
+                            character: 0
+                        },
+                        end: Position {
+                            line: 8,
+                            character: 1
+                        }
+                    }
+                },
+                container_name: None
+            },
+            // deprecated field is deprecated, but cannot be omitted
+            #[allow(deprecated)]
+            SymbolInformation {
+                name: "Foo".into(),
+                kind: SymbolKind::STRUCT,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: uri.clone(),
+                    range: Range {
+                        start: Position {
+                            line: 10,
+                            character: 0
+                        },
+                        end: Position {
+                            line: 13,
+                            character: 1
+                        }
+                    }
+                },
+                container_name: None
+            },
+            // deprecated field is deprecated, but cannot be omitted
+            #[allow(deprecated)]
+            SymbolInformation {
+                name: "Bar".into(),
+                kind: SymbolKind::STRUCT,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: uri.clone(),
+                    range: Range {
+                        start: Position {
+                            line: 15,
+                            character: 0
+                        },
+                        end: Position {
+                            line: 17,
+                            character: 1
+                        }
+                    }
+                },
+                container_name: None
+            }
+        ]))
     );
     Ok(())
 }
