@@ -35,8 +35,8 @@ impl TestClient {
         T: lsp_types::notification::Notification,
     {
         match self.conn.receiver.recv()? {
-            Message::Request(_) => Err("Got Request, expected notification")?,
-            Message::Response(_) => Err("Got Response, expected notification")?,
+            Message::Request(r) => Err(format!("Expected notification, got: {r:?}"))?,
+            Message::Response(r) => Err(format!("Expected notification, got: {r:?}"))?,
             Message::Notification(resp) => {
                 assert_eq!(resp.method, T::METHOD);
                 Ok(serde_json::from_value(resp.params)?)
@@ -59,8 +59,8 @@ impl TestClient {
         self.conn.sender.send(req)?;
         eprintln!("Waiting");
         match self.conn.receiver.recv()? {
-            Message::Request(_) => Err("Got Request as response")?,
-            Message::Notification(_) => Err("Got Notification as response")?,
+            Message::Request(r) => Err(format!("Expected response, got: {r:?}"))?,
+            Message::Notification(r) => Err(format!("Expected response, got: {r:?}"))?,
             Message::Response(resp) => Ok(serde_json::from_value(
                 resp.result.ok_or("Missing result from response")?,
             )?),
