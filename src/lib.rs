@@ -30,7 +30,7 @@ struct Config {
     proto_paths: Vec<String>,
 }
 
-pub fn start(connection: Connection) -> Result<()> {
+pub fn run(connection: Connection) -> Result<()> {
     let conf = if let Ok(s) = fs::read_to_string(".pbls.toml") {
         toml::from_str(s.as_str())?
     } else {
@@ -99,12 +99,14 @@ pub fn start(connection: Connection) -> Result<()> {
             Message::Notification(not) => match not.method.as_str() {
                 DidOpenTextDocument::METHOD => {
                     if let Ok(params) = notification::<DidOpenTextDocument>(not) {
+                        eprintln!("Handling DidOpenTextDocument: {}", params.text_document.uri);
                         let resp = on_open(params.text_document.uri, &conf)?;
                         connection.sender.send(Message::Notification(resp))?;
                     }
                 }
                 DidSaveTextDocument::METHOD => {
                     if let Ok(params) = notification::<DidSaveTextDocument>(not) {
+                        eprintln!("Handling DidSaveTextDocument: {}", params.text_document.uri);
                         let resp = on_open(params.text_document.uri, &conf)?;
                         connection.sender.send(Message::Notification(resp))?;
                     }
@@ -158,7 +160,7 @@ fn parse_diag(line: &str) -> Option<lsp_types::Diagnostic> {
         },
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some(String::from("pbls")),
-        message: msg.into(),
+        message: msg.trim().into(),
         ..Default::default()
     })
 }
@@ -332,6 +334,7 @@ fn on_open(uri: Url, conf: &Config) -> Result<lsp_server::Notification> {
         Ok(_) => Vec::<Diagnostic>::new(),
         Err(err) => {
             let err = err.source().ok_or("Parse error missing source")?;
+            eprintln!("Parsing diagnostics from {}", err);
             get_diagnostics(err)?
         }
     };

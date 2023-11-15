@@ -1,6 +1,6 @@
 fn main() -> pbls::Result<()> {
     let (connection, io_threads) = lsp_server::Connection::stdio();
-    pbls::start(connection)?;
+    pbls::run(connection)?;
     io_threads.join()?;
     Ok(())
 }

@@ -1,8 +1,11 @@
-use lsp_server::{Connection, Message, Notification};
+use lsp_server::{Connection, Message};
 use lsp_types::notification::{DidOpenTextDocument, PublishDiagnostics};
 use lsp_types::request::Shutdown;
 use lsp_types::{notification::Initialized, request::Initialize, InitializedParams};
-use lsp_types::{DidOpenTextDocumentParams, InitializeParams, TextDocumentItem, Url};
+use lsp_types::{
+    Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams, InitializeParams, Position,
+    PublishDiagnosticsParams, Range, TextDocumentItem, Url,
+};
 use pbls::Result;
 use std::error::Error;
 
@@ -16,7 +19,7 @@ impl TestClient {
     fn new() -> Result<TestClient> {
         let (client, server) = Connection::memory();
         let thread = std::thread::spawn(|| {
-            pbls::start(server).unwrap();
+            pbls::run(server).unwrap();
         });
         let mut client = TestClient {
             conn: client,
@@ -91,41 +94,119 @@ impl Drop for TestClient {
 }
 
 #[test]
-fn test_diagnostics() -> pbls::Result<()> {
-    let mut client = TestClient::new()?;
+fn test_start_stop() -> pbls::Result<()> {
+    TestClient::new()?;
+    Ok(())
+}
 
+#[test]
+fn test_open_ok() -> pbls::Result<()> {
+    let client = TestClient::new()?;
+
+    let uri =
+        Url::from_file_path(std::path::Path::new("testdata/simple.proto").canonicalize()?).unwrap();
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
-            uri: Url::from_file_path(std::path::Path::new("example.proto").canonicalize()?)
-                .unwrap(),
+            uri: uri.clone(),
             language_id: "".into(),
             version: 0,
             text: "".into(),
         },
     })?;
     let diags = client.recv::<PublishDiagnostics>()?;
-    // assert_eq!(
-    //     InitializeResult::from(),
-    //     InitializeResult {
-    //         capabilities: ServerCapabilities {
-    //             document_symbol_provider: Some(OneOf::Left(true)),
-    //             text_document_sync: Some(TextDocumentSyncCapability::Options(
-    //                 TextDocumentSyncOptions {
-    //                     save: Some(TextDocumentSyncSaveOptions::Supported(true)),
-    //                     ..Default::default()
-    //                 },
-    //             )),
-    //             // completion_provider: Some(lsp_types::CompletionOptions::default()),
-    //             diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
-    //                 lsp_types::DiagnosticOptions {
-    //                     identifier: Some(String::from("spelgud")),
-    //                     ..Default::default()
-    //                 },
-    //             )),
-    //             ..Default::default()
-    //         },
-    //         server_info: None,
-    //     }
-    // );
+    assert_eq!(
+        diags,
+        PublishDiagnosticsParams {
+            uri: uri,
+            diagnostics: vec![],
+            version: None,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn test_diagnostics() -> pbls::Result<()> {
+    let client = TestClient::new()?;
+
+    let uri =
+        Url::from_file_path(std::path::Path::new("testdata/error.proto").canonicalize()?).unwrap();
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    let diags = client.recv::<PublishDiagnostics>()?;
+
+    let base_diag = Diagnostic {
+        range: Range {
+            start: Position {
+                line: 16,
+                character: 0,
+            },
+            end: Position {
+                line: 16,
+                character: 318,
+            },
+        },
+        severity: Some(DiagnosticSeverity::ERROR),
+        source: Some("pbls".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        diags,
+        PublishDiagnosticsParams {
+            uri,
+            diagnostics: vec![
+                Diagnostic {
+                    range: Range {
+                        start: Position {
+                            line: 16,
+                            character: 0
+                        },
+                        end: Position {
+                            line: 16,
+                            character: 318
+                        }
+                    },
+                    message: "\"f\" is already defined in \"main.Bar\".".into(),
+                    ..base_diag.clone()
+                },
+                Diagnostic {
+                    range: Range {
+                        start: Position {
+                            line: 11,
+                            character: 0
+                        },
+                        end: Position {
+                            line: 11,
+                            character: 44
+                        }
+                    },
+                    message: "\"Thingy\" is not defined.".into(),
+                    ..base_diag.clone()
+                },
+                Diagnostic {
+                    range: Range {
+                        start: Position {
+                            line: 16,
+                            character: 0
+                        },
+                        end: Position {
+                            line: 16,
+                            character: 88
+                        }
+                    },
+                    message: "Field number 1 has already been used in \"main.Bar\" by field \"f\""
+                        .into(),
+                    ..base_diag.clone()
+                }
+            ],
+            version: None
+        }
+    );
     Ok(())
 }

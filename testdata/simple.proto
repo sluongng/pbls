@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package main;
+
+enum Thing {
+  THING_FOO = 0;
+  THING_BAR = 1;
+  THING_BAZ = 2;
+}
+
+message Foo {
+  int32 i = 1;
+  Thing t = 2;
+}
+
+message Bar {
+  Foo f = 1;
+}
