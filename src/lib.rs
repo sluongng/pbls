@@ -1,12 +1,15 @@
-use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response};
-use lsp_types::request::DocumentSymbolRequest;
+use lsp_server::{Connection, ExtractError, Message, Response};
+use lsp_types::request::{DocumentSymbolRequest, Request};
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
     Diagnostic, DiagnosticServerCapabilities, DiagnosticSeverity, InitializeParams, Range,
     ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncOptions,
     TextDocumentSyncSaveOptions, Url,
 };
-use lsp_types::{DocumentSymbolResponse, Location, OneOf, Position, SymbolInformation, SymbolKind};
+use lsp_types::{
+    DocumentSymbolParams, DocumentSymbolResponse, Location, OneOf, Position, SymbolInformation,
+    SymbolKind,
+};
 use protobuf::descriptor::{source_code_info, DescriptorProto, FileDescriptorProto};
 use protobuf_parse;
 use std::fs;
@@ -70,8 +73,10 @@ pub fn run(connection: Connection) -> Result<()> {
                     eprintln!("Shutting down");
                     return Ok(());
                 }
-                match cast::<DocumentSymbolRequest>(req) {
-                    Ok((id, params)) => {
+                match req.method.as_str() {
+                    DocumentSymbolRequest::METHOD => {
+                        let (id, params) =
+                            req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)?;
                         let resp = match get_symbols(params.text_document.uri, &conf) {
                             Ok(result) => Response {
                                 id,
@@ -91,9 +96,8 @@ pub fn run(connection: Connection) -> Result<()> {
                         connection.sender.send(Message::Response(resp))?;
                         continue;
                     }
-                    Err(err @ ExtractError::JsonError { .. }) => panic!("{err:?}"),
-                    Err(ExtractError::MethodMismatch(req)) => req,
-                };
+                    _ => {}
+                }
             }
             Message::Response(_) => {}
             Message::Notification(not) => match not.method.as_str() {
@@ -300,14 +304,6 @@ fn get_symbols(uri: Url, conf: &Config) -> Result<DocumentSymbolResponse> {
     ))
 }
 
-fn cast<R>(req: Request) -> std::result::Result<(RequestId, R::Params), ExtractError<Request>>
-where
-    R: lsp_types::request::Request,
-    R::Params: serde::de::DeserializeOwned,
-{
-    req.extract(R::METHOD)
-}
-
 fn notification<N>(
     not: lsp_server::Notification,
 ) -> std::result::Result<N::Params, ExtractError<lsp_server::Notification>>
@@ -316,14 +312,6 @@ where
     N::Params: serde::de::DeserializeOwned,
 {
     not.extract(N::METHOD)
-}
-
-fn method<N>() -> String
-where
-    N: lsp_types::notification::Notification,
-    N::Params: serde::de::DeserializeOwned,
-{
-    String::from(N::METHOD)
 }
 
 fn on_open(uri: Url, conf: &Config) -> Result<lsp_server::Notification> {
@@ -346,7 +334,7 @@ fn on_open(uri: Url, conf: &Config) -> Result<lsp_server::Notification> {
     };
 
     Ok(lsp_server::Notification {
-        method: method::<PublishDiagnostics>(),
+        method: PublishDiagnostics::METHOD.into(),
         params: serde_json::to_value(&params)?,
     })
 }
