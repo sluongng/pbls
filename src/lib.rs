@@ -31,13 +31,6 @@ struct Config {
 }
 
 pub fn run(connection: Connection) -> Result<()> {
-    let conf = if let Ok(s) = fs::read_to_string(".pbls.toml") {
-        toml::from_str(s.as_str())?
-    } else {
-        Config::default()
-    };
-    eprintln!("Using config {:?}", conf);
-
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
         text_document_sync: Some(TextDocumentSyncCapability::Options(
@@ -60,7 +53,20 @@ pub fn run(connection: Connection) -> Result<()> {
     eprintln!("Initializing");
     let init_params = connection.initialize(server_capabilities)?;
     eprintln!("Initialized");
-    let _params: InitializeParams = serde_json::from_value(init_params).unwrap();
+    let params: InitializeParams = serde_json::from_value(init_params).unwrap();
+    let root = params
+        .root_uri
+        .map(|u| u.path().to_string())
+        .unwrap_or(".".into());
+    let path = std::path::Path::new(&root).join(".pbls.toml");
+    let conf = if path.is_file() {
+        eprintln!("Reading config from {path:?}");
+        toml::from_str(fs::read_to_string(path)?.as_str())?
+    } else {
+        eprintln!("Using default config");
+        Config::default()
+    };
+    eprintln!("Using config {:?}", conf);
 
     for msg in &connection.receiver {
         eprintln!("Handling message {msg:?}");
