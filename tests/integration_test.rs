@@ -28,7 +28,12 @@ impl TestClient {
             id: 0,
         };
 
-        client.request::<Initialize>(InitializeParams::default())?;
+        client.request::<Initialize>(InitializeParams {
+            root_uri: Some(
+                Url::from_file_path(std::path::Path::new("testdata").canonicalize()?).unwrap(),
+            ),
+            ..Default::default()
+        })?;
         client.notify::<Initialized>(InitializedParams {})?;
 
         Ok(client)
