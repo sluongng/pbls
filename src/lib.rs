@@ -1,5 +1,6 @@
+use core::panic;
 use lsp_server::{Connection, ExtractError, Message, Response};
-use lsp_types::request::{DocumentSymbolRequest, Request};
+use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Request};
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
     Diagnostic, DiagnosticServerCapabilities, DiagnosticSeverity, InitializeParams, Range,
@@ -7,8 +8,8 @@ use lsp_types::{
     TextDocumentSyncSaveOptions, Url,
 };
 use lsp_types::{
-    DocumentSymbolParams, DocumentSymbolResponse, Location, OneOf, Position, SymbolInformation,
-    SymbolKind,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    Location, OneOf, Position, SymbolInformation, SymbolKind,
 };
 use protobuf::descriptor::{source_code_info, DescriptorProto, FileDescriptorProto};
 use protobuf_parse;
@@ -42,6 +43,7 @@ pub fn run(connection: Connection) -> Result<()> {
                 ..Default::default()
             },
         )),
+        definition_provider: Some(OneOf::Left(true)),
         // completion_provider: Some(lsp_types::CompletionOptions::default()),
         diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
             lsp_types::DiagnosticOptions {
@@ -84,6 +86,28 @@ pub fn run(connection: Connection) -> Result<()> {
                         let (id, params) =
                             req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)?;
                         let resp = match get_symbols(params.text_document.uri, &conf) {
+                            Ok(result) => Response {
+                                id,
+                                result: Some(serde_json::to_value(&result)?),
+                                error: None,
+                            },
+                            Err(err) => Response {
+                                id,
+                                result: None,
+                                error: Some(lsp_server::ResponseError {
+                                    code: lsp_server::ErrorCode::InternalError as i32,
+                                    message: err.to_string(),
+                                    data: None,
+                                }),
+                            },
+                        };
+                        connection.sender.send(Message::Response(resp))?;
+                        continue;
+                    }
+                    GotoDefinition::METHOD => {
+                        let (id, params) =
+                            req.extract::<GotoDefinitionParams>(GotoDefinition::METHOD)?;
+                        let resp = match get_definition(params, &conf) {
                             Ok(result) => Response {
                                 id,
                                 result: Some(serde_json::to_value(&result)?),
@@ -291,6 +315,46 @@ fn location_to_symbol(
         deprecated: None,
         container_name: None,
     })
+}
+
+fn get_definition(params: GotoDefinitionParams, conf: &Config) -> Result<GotoDefinitionResponse> {
+    let uri = params.text_document_position_params.text_document.uri;
+    let path = uri.path();
+    let pos = params.text_document_position_params.position;
+
+    // Find the word dunder the cursor
+    let text = fs::read_to_string(uri.path())?;
+    let lineno: usize = pos.line.try_into()?;
+    let charno: usize = pos.character.try_into()?;
+    let line = text
+        .lines()
+        .skip(lineno)
+        .next()
+        .ok_or(format!("Line {lineno} out of range in file {path}"))?;
+    let fore = line[..charno]
+        .rfind(|c: char| c.is_whitespace())
+        .map(|n| n + 1)
+        .unwrap_or(0);
+    let aft = line[charno..]
+        .find(|c: char| c.is_whitespace())
+        .map(|n| n + charno)
+        .unwrap_or(line.len());
+    let word = &line[fore..aft];
+    eprintln!("Getting definition for {word}");
+
+    // Find the symbol matching the word
+    let syms = get_symbols(uri.clone(), &conf)?;
+    let DocumentSymbolResponse::Flat(flat) = syms else {
+        panic!("Expected flat document symbols")
+    };
+    if let Some(sym) = flat.iter().find(|x| x.name == word) {
+        Ok(GotoDefinitionResponse::Scalar(Location {
+            uri,
+            range: sym.location.range,
+        }))
+    } else {
+        Err(format!("Symbol for '{word}' not found").into())
+    }
 }
 
 fn get_symbols(uri: Url, conf: &Config) -> Result<DocumentSymbolResponse> {
