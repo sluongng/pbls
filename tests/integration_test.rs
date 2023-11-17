@@ -1,12 +1,12 @@
 use lsp_server::{Connection, Message};
 use lsp_types::notification::{DidOpenTextDocument, PublishDiagnostics};
-use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Shutdown};
+use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Shutdown, WorkspaceSymbolRequest};
 use lsp_types::{notification::Initialized, request::Initialize, InitializedParams};
 use lsp_types::{
     Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams, DocumentSymbolParams,
     GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, Location, Position,
     PublishDiagnosticsParams, Range, SymbolInformation, SymbolKind, TextDocumentIdentifier,
-    TextDocumentItem, TextDocumentPositionParams, Url,
+    TextDocumentItem, TextDocumentPositionParams, Url, WorkspaceSymbolParams,
 };
 use pbls::Result;
 use pretty_assertions::assert_eq;
@@ -249,7 +249,7 @@ fn test_no_diagnostics() -> pbls::Result<()> {
 }
 
 #[test]
-fn test_symbols() -> pbls::Result<()> {
+fn test_document_symbols() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
 
     let uri =
@@ -351,6 +351,171 @@ fn test_symbols() -> pbls::Result<()> {
                 deprecated: None,
                 location: Location {
                     uri: uri.clone(),
+                    range: Range {
+                        start: Position {
+                            line: 21,
+                            character: 0
+                        },
+                        end: Position {
+                            line: 21,
+                            character: 16
+                        }
+                    }
+                },
+                container_name: None
+            }
+        ]))
+    );
+    Ok(())
+}
+
+#[test]
+fn test_workspace_symbols() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+
+    let base_uri = Url::from_file_path(std::fs::canonicalize("testdata/simple.proto")?).unwrap();
+    let dep_uri = Url::from_file_path(std::fs::canonicalize("testdata/dep.proto")?).unwrap();
+
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: base_uri.clone(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    client.recv::<PublishDiagnostics>()?;
+
+    let syms = client.request::<WorkspaceSymbolRequest>(WorkspaceSymbolParams {
+        query: "".into(),
+        work_done_progress_params: lsp_types::WorkDoneProgressParams {
+            work_done_token: None,
+        },
+        partial_result_params: lsp_types::PartialResultParams {
+            partial_result_token: None,
+        },
+    })?;
+    assert_eq!(
+        syms,
+        Some(lsp_types::WorkspaceSymbolResponse::Flat(vec![
+            // deprecated field is deprecated, but cannot be omitted
+            #[allow(deprecated)]
+            SymbolInformation {
+                name: "Dep".into(),
+                kind: SymbolKind::STRUCT,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: dep_uri.clone(),
+                    range: Range {
+                        start: Position {
+                            line: 4,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 6,
+                            character: 1,
+                        },
+                    },
+                },
+                container_name: None,
+            },
+            // deprecated field is deprecated, but cannot be omitted
+            #[allow(deprecated)]
+            SymbolInformation {
+                name: "Dep2".into(),
+                kind: SymbolKind::ENUM,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: dep_uri.clone(),
+                    range: Range {
+                        start: Position {
+                            line: 8,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 11,
+                            character: 1,
+                        },
+                    },
+                },
+                container_name: None,
+            },
+            // deprecated field is deprecated, but cannot be omitted
+            #[allow(deprecated)]
+            SymbolInformation {
+                name: "Thing".into(),
+                kind: SymbolKind::ENUM,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: base_uri.clone(),
+                    range: Range {
+                        start: Position {
+                            line: 6,
+                            character: 0
+                        },
+                        end: Position {
+                            line: 10,
+                            character: 1
+                        }
+                    }
+                },
+                container_name: None
+            },
+            // deprecated field is deprecated, but cannot be omitted
+            #[allow(deprecated)]
+            SymbolInformation {
+                name: "Foo".into(),
+                kind: SymbolKind::STRUCT,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: base_uri.clone(),
+                    range: Range {
+                        start: Position {
+                            line: 12,
+                            character: 0
+                        },
+                        end: Position {
+                            line: 15,
+                            character: 1
+                        }
+                    }
+                },
+                container_name: None
+            },
+            // deprecated field is deprecated, but cannot be omitted
+            #[allow(deprecated)]
+            SymbolInformation {
+                name: "Bar".into(),
+                kind: SymbolKind::STRUCT,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: base_uri.clone(),
+                    range: Range {
+                        start: Position {
+                            line: 17,
+                            character: 0
+                        },
+                        end: Position {
+                            line: 19,
+                            character: 1
+                        }
+                    }
+                },
+                container_name: None
+            },
+            #[allow(deprecated)]
+            SymbolInformation {
+                name: "Empty".into(),
+                kind: SymbolKind::STRUCT,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: base_uri.clone(),
                     range: Range {
                         start: Position {
                             line: 21,

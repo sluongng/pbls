@@ -1,5 +1,5 @@
 use lsp_server::{Connection, ExtractError, Message, Response};
-use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Request};
+use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Request, WorkspaceSymbolRequest};
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
     Diagnostic, DiagnosticServerCapabilities, DiagnosticSeverity, InitializeParams, Range,
@@ -8,11 +8,13 @@ use lsp_types::{
 };
 use lsp_types::{
     DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    Location, OneOf, Position, SymbolInformation, SymbolKind,
+    Location, OneOf, Position, SymbolInformation, SymbolKind, WorkspaceSymbolParams,
+    WorkspaceSymbolResponse,
 };
 use protobuf::descriptor::{source_code_info, DescriptorProto, FileDescriptorProto};
 use protobuf_parse;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::{error::Error, path};
 
 // Field numbers from https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L100-L101
@@ -31,6 +33,7 @@ struct Config {
 pub fn run(connection: Connection) -> Result<()> {
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
         text_document_sync: Some(TextDocumentSyncCapability::Options(
             TextDocumentSyncOptions {
                 save: Some(TextDocumentSyncSaveOptions::Supported(true)),
@@ -82,6 +85,28 @@ pub fn run(connection: Connection) -> Result<()> {
                         let (id, params) =
                             req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)?;
                         let resp = match get_symbols(params.text_document.uri, &conf) {
+                            Ok(result) => Response {
+                                id,
+                                result: Some(serde_json::to_value(&result)?),
+                                error: None,
+                            },
+                            Err(err) => Response {
+                                id,
+                                result: None,
+                                error: Some(lsp_server::ResponseError {
+                                    code: lsp_server::ErrorCode::InternalError as i32,
+                                    message: err.to_string(),
+                                    data: None,
+                                }),
+                            },
+                        };
+                        connection.sender.send(Message::Response(resp))?;
+                        continue;
+                    }
+                    WorkspaceSymbolRequest::METHOD => {
+                        let (id, params) =
+                            req.extract::<WorkspaceSymbolParams>(WorkspaceSymbolRequest::METHOD)?;
+                        let resp = match get_workspace_symbols(&conf) {
                             Ok(result) => Response {
                                 id,
                                 result: Some(serde_json::to_value(&result)?),
@@ -360,17 +385,21 @@ fn get_definition(params: GotoDefinitionParams, conf: &Config) -> Result<GotoDef
     }))
 }
 
-// fn file_to_symbols_with_imports(uri: Url, conf: &Config) -> Result<Vec<SymbolInformation>> {
-//     let parsed = parse(uri.path(), &conf)?;
-//     let first = parsed.first().ok_or("No info")?;
-//     let imports = first.dependency.iter().map(|x| find_import(x));
-//     Ok(first
-//         .source_code_info
-//         .location
-//         .iter()
-//         .filter_map(|loc| location_to_symbol(uri.clone(), loc, first))
-//         .collect())
-// }
+fn workspace_symbols(conf: &Config) -> Result<Vec<SymbolInformation>> {
+    Ok(conf
+        .proto_paths
+        .iter()
+        .filter_map(|p| std::fs::read_dir(p).ok())
+        .flatten()
+        .filter_map(|p| p.ok())
+        .map(|f| f.path())
+        .filter(|p| p.is_file() && p.extension().map_or(false, |e| e == "proto"))
+        .filter_map(|p| fs::canonicalize(p).ok())
+        .filter_map(|p| Url::from_file_path(p).ok())
+        .filter_map(|u| file_to_symbols(u, &conf).ok())
+        .flatten()
+        .collect())
+}
 
 fn file_to_symbols(uri: Url, conf: &Config) -> Result<Vec<SymbolInformation>> {
     let parsed = parse(uri.path(), &conf)?;
@@ -385,6 +414,10 @@ fn file_to_symbols(uri: Url, conf: &Config) -> Result<Vec<SymbolInformation>> {
 
 fn get_symbols(uri: Url, conf: &Config) -> Result<DocumentSymbolResponse> {
     Ok(DocumentSymbolResponse::Flat(file_to_symbols(uri, conf)?))
+}
+
+fn get_workspace_symbols(conf: &Config) -> Result<WorkspaceSymbolResponse> {
+    Ok(WorkspaceSymbolResponse::Flat(workspace_symbols(conf)?))
 }
 
 fn notification<N>(
