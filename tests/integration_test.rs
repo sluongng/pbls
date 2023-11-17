@@ -340,6 +340,27 @@ fn test_symbols() -> pbls::Result<()> {
                     }
                 },
                 container_name: None
+            },
+            #[allow(deprecated)]
+            SymbolInformation {
+                name: "Empty".into(),
+                kind: SymbolKind::STRUCT,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: uri.clone(),
+                    range: Range {
+                        start: Position {
+                            line: 19,
+                            character: 0
+                        },
+                        end: Position {
+                            line: 19,
+                            character: 16
+                        }
+                    }
+                },
+                container_name: None
             }
         ]))
     );

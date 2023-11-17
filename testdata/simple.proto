@@ -16,3 +16,5 @@ message Foo {
 message Bar {
   Foo f = 1;
 }
+
+message Empty {}

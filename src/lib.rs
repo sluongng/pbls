@@ -1,4 +1,3 @@
-use core::panic;
 use lsp_server::{Connection, ExtractError, Message, Response};
 use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Request};
 use lsp_types::{
@@ -293,13 +292,22 @@ fn location_to_symbol(
     // See https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L1097-L1120
     // The first element is the type, followed by the index of that type in the descriptor.
     let (name, kind) = location_to_name_kind(&loc.path[..], fd)?;
+
+    // Always has exactly three or four elements: start line, start column,
+    // end line (optional, otherwise assumed same as start line), end column.
+    let (start_line, start_col, end_line, end_col) = match loc.span[..] {
+        [start_line, start_col, end_line, end_col] => (start_line, start_col, end_line, end_col),
+        [start_line, start_col, end_col] => (start_line, start_col, start_line, end_col),
+        _ => None?,
+    };
+
     let start = Position {
-        line: loc.span[0].try_into().unwrap(),
-        character: loc.span[1].try_into().unwrap(),
+        line: start_line.try_into().unwrap(),
+        character: start_col.try_into().unwrap(),
     };
     let end = Position {
-        line: loc.span[2].try_into().unwrap(),
-        character: loc.span[3].try_into().unwrap(),
+        line: end_line.try_into().unwrap(),
+        character: end_col.try_into().unwrap(),
     };
 
     // deprecated field is deprecated, but cannot be omitted
@@ -343,35 +351,35 @@ fn get_definition(params: GotoDefinitionParams, conf: &Config) -> Result<GotoDef
     eprintln!("Getting definition for {word}");
 
     // Find the symbol matching the word
-    let syms = get_symbols(uri.clone(), &conf)?;
-    let DocumentSymbolResponse::Flat(flat) = syms else {
-        panic!("Expected flat document symbols")
-    };
-    if let Some(sym) = flat.iter().find(|x| x.name == word) {
-        Ok(GotoDefinitionResponse::Scalar(Location {
-            uri,
-            range: sym.location.range,
-        }))
-    } else {
-        Err(format!("Symbol for '{word}' not found").into())
-    }
+    let syms = file_to_symbols(uri.clone(), &conf)?;
+    let sym = syms
+        .iter()
+        .find(|x| x.name == word)
+        .ok_or(format!("Symbol for '{word}' not found"))?;
+
+    Ok(GotoDefinitionResponse::Scalar(Location {
+        uri,
+        range: sym.location.range,
+    }))
 }
 
-fn get_symbols(uri: Url, conf: &Config) -> Result<DocumentSymbolResponse> {
+fn file_to_symbols(uri: Url, conf: &Config) -> Result<Vec<SymbolInformation>> {
     let parsed = parse(uri.path(), &conf)?;
     let first = parsed.first().ok_or("No info")?;
     eprintln!(
         "messages={:?}, locations={:?}",
         first.message_type, first.source_code_info
     );
-    Ok(DocumentSymbolResponse::Flat(
-        first
-            .source_code_info
-            .location
-            .iter()
-            .filter_map(|loc| location_to_symbol(uri.clone(), loc, first))
-            .collect(),
-    ))
+    Ok(first
+        .source_code_info
+        .location
+        .iter()
+        .filter_map(|loc| location_to_symbol(uri.clone(), loc, first))
+        .collect())
+}
+
+fn get_symbols(uri: Url, conf: &Config) -> Result<DocumentSymbolResponse> {
+    Ok(DocumentSymbolResponse::Flat(file_to_symbols(uri, conf)?))
 }
 
 fn notification<N>(
