@@ -1,11 +1,12 @@
 use lsp_server::{Connection, Message};
 use lsp_types::notification::{DidOpenTextDocument, PublishDiagnostics};
-use lsp_types::request::{DocumentSymbolRequest, Shutdown};
+use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Shutdown};
 use lsp_types::{notification::Initialized, request::Initialize, InitializedParams};
 use lsp_types::{
     Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams, DocumentSymbolParams,
-    InitializeParams, Location, Position, PublishDiagnosticsParams, Range, SymbolInformation,
-    SymbolKind, TextDocumentIdentifier, TextDocumentItem, Url,
+    GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, Location, Position,
+    PublishDiagnosticsParams, Range, SymbolInformation, SymbolKind, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, Url,
 };
 use pbls::Result;
 use std::error::Error;
@@ -364,5 +365,94 @@ fn test_symbols() -> pbls::Result<()> {
             }
         ]))
     );
+    Ok(())
+}
+
+#[test]
+fn test_goto_definition_same_file() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+
+    let uri =
+        Url::from_file_path(std::path::Path::new("testdata/simple.proto").canonicalize()?).unwrap();
+
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    client.recv::<PublishDiagnostics>()?;
+
+    // goto Thing enum
+    {
+        let resp = client.request::<GotoDefinition>(GotoDefinitionParams {
+            work_done_progress_params: lsp_types::WorkDoneProgressParams {
+                work_done_token: None,
+            },
+            partial_result_params: lsp_types::PartialResultParams {
+                partial_result_token: None,
+            },
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri: uri.clone() },
+                position: Position {
+                    line: 12,
+                    character: 5,
+                },
+            },
+        })?;
+        assert_eq!(
+            resp,
+            Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: Range {
+                    start: Position {
+                        line: 4,
+                        character: 0
+                    },
+                    end: Position {
+                        line: 8,
+                        character: 1
+                    }
+                }
+            }))
+        );
+    }
+
+    // goto Foo message
+    {
+        let resp = client.request::<GotoDefinition>(GotoDefinitionParams {
+            work_done_progress_params: lsp_types::WorkDoneProgressParams {
+                work_done_token: None,
+            },
+            partial_result_params: lsp_types::PartialResultParams {
+                partial_result_token: None,
+            },
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri: uri.clone() },
+                position: Position {
+                    line: 16,
+                    character: 2,
+                },
+            },
+        })?;
+        assert_eq!(
+            resp,
+            Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: Range {
+                    start: Position {
+                        line: 10,
+                        character: 0
+                    },
+                    end: Position {
+                        line: 13,
+                        character: 1
+                    }
+                }
+            }))
+        );
+    }
     Ok(())
 }
