@@ -9,6 +9,7 @@ use lsp_types::{
     TextDocumentItem, TextDocumentPositionParams, Url,
 };
 use pbls::Result;
+use pretty_assertions::assert_eq;
 use std::error::Error;
 
 struct TestClient {
@@ -287,11 +288,11 @@ fn test_symbols() -> pbls::Result<()> {
                     uri: uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 4,
+                            line: 6,
                             character: 0
                         },
                         end: Position {
-                            line: 8,
+                            line: 10,
                             character: 1
                         }
                     }
@@ -309,11 +310,11 @@ fn test_symbols() -> pbls::Result<()> {
                     uri: uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 10,
+                            line: 12,
                             character: 0
                         },
                         end: Position {
-                            line: 13,
+                            line: 15,
                             character: 1
                         }
                     }
@@ -331,11 +332,11 @@ fn test_symbols() -> pbls::Result<()> {
                     uri: uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 15,
+                            line: 17,
                             character: 0
                         },
                         end: Position {
-                            line: 17,
+                            line: 19,
                             character: 1
                         }
                     }
@@ -352,11 +353,11 @@ fn test_symbols() -> pbls::Result<()> {
                     uri: uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 19,
+                            line: 21,
                             character: 0
                         },
                         end: Position {
-                            line: 19,
+                            line: 21,
                             character: 16
                         }
                     }
@@ -397,7 +398,7 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
             text_document_position_params: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier { uri: uri.clone() },
                 position: Position {
-                    line: 12,
+                    line: 14,
                     character: 5,
                 },
             },
@@ -408,11 +409,11 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
                 uri: uri.clone(),
                 range: Range {
                     start: Position {
-                        line: 4,
+                        line: 6,
                         character: 0
                     },
                     end: Position {
-                        line: 8,
+                        line: 10,
                         character: 1
                     }
                 }
@@ -432,7 +433,7 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
             text_document_position_params: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier { uri: uri.clone() },
                 position: Position {
-                    line: 16,
+                    line: 18,
                     character: 2,
                 },
             },
@@ -443,11 +444,11 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
                 uri: uri.clone(),
                 range: Range {
                     start: Position {
-                        line: 10,
+                        line: 12,
                         character: 0
                     },
                     end: Position {
-                        line: 13,
+                        line: 15,
                         character: 1
                     }
                 }

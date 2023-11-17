@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package main;
 
+import "dep.proto";
+
 enum Thing {
   THING_FOO = 0;
   THING_BAR = 1;

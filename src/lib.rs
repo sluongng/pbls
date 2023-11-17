@@ -23,13 +23,8 @@ const NESTED_ENUM_TYPE: i32 = 4;
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-fn default_proto_paths() -> Vec<String> {
-    vec![".".into()]
-}
-
-#[derive(Debug, serde::Deserialize, Default)]
+#[derive(Debug, serde::Deserialize)]
 struct Config {
-    #[serde(default = "default_proto_paths")]
     proto_paths: Vec<String>,
 }
 
@@ -68,7 +63,9 @@ pub fn run(connection: Connection) -> Result<()> {
         toml::from_str(fs::read_to_string(path)?.as_str())?
     } else {
         eprintln!("Using default config");
-        Config::default()
+        Config {
+            proto_paths: vec![root],
+        }
     };
     eprintln!("Using config {:?}", conf);
 
@@ -363,13 +360,21 @@ fn get_definition(params: GotoDefinitionParams, conf: &Config) -> Result<GotoDef
     }))
 }
 
+// fn file_to_symbols_with_imports(uri: Url, conf: &Config) -> Result<Vec<SymbolInformation>> {
+//     let parsed = parse(uri.path(), &conf)?;
+//     let first = parsed.first().ok_or("No info")?;
+//     let imports = first.dependency.iter().map(|x| find_import(x));
+//     Ok(first
+//         .source_code_info
+//         .location
+//         .iter()
+//         .filter_map(|loc| location_to_symbol(uri.clone(), loc, first))
+//         .collect())
+// }
+
 fn file_to_symbols(uri: Url, conf: &Config) -> Result<Vec<SymbolInformation>> {
     let parsed = parse(uri.path(), &conf)?;
     let first = parsed.first().ok_or("No info")?;
-    eprintln!(
-        "messages={:?}, locations={:?}",
-        first.message_type, first.source_code_info
-    );
     Ok(first
         .source_code_info
         .location
