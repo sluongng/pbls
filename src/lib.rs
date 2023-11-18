@@ -1,4 +1,4 @@
-use lsp_server::{Connection, ExtractError, Message, Response};
+use lsp_server::{Connection, Message, Response};
 use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Request, WorkspaceSymbolRequest};
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
@@ -351,7 +351,7 @@ fn get_definition(params: GotoDefinitionParams, conf: &Config) -> Result<GotoDef
     let path = uri.path();
     let pos = params.text_document_position_params.position;
 
-    // Find the word dunder the cursor
+    // Find the word under the cursor
     let text = fs::read_to_string(uri.path())?;
     let lineno: usize = pos.line.try_into()?;
     let charno: usize = pos.character.try_into()?;
@@ -368,15 +368,22 @@ fn get_definition(params: GotoDefinitionParams, conf: &Config) -> Result<GotoDef
         .find(|c: char| c.is_whitespace())
         .map(|n| n + charno)
         .unwrap_or(line.len());
-    let word = &line[fore..aft];
-    eprintln!("Getting definition for {word}");
+    let fullname = &line[fore..aft];
+    eprintln!("Getting definition for {fullname}");
+
+    let (pkg, name) = fullname.rsplit_once(".").unwrap_or(("", fullname));
 
     // Find the symbol matching the word
     let syms = workspace_symbols(&conf)?;
+
+    // If pkg is empty, it refers to a type within the same package as the edited proto file.
+    // Otherwise, we check for that name in another package.
     let sym = syms
         .iter()
-        .find(|x| x.name == word)
-        .ok_or(format!("Symbol for '{word}' not found"))?;
+        .find(|x| {
+            x.name == name && (pkg == "" || x.container_name.as_ref().map_or(false, |c| c == pkg))
+        })
+        .ok_or(format!("Symbol for '{fullname}' not found"))?;
 
     Ok(GotoDefinitionResponse::Scalar(sym.location.clone()))
 }
