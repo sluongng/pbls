@@ -314,7 +314,7 @@ fn test_document_symbols() -> pbls::Result<()> {
                             character: 0
                         },
                         end: Position {
-                            line: 15,
+                            line: 16,
                             character: 1
                         }
                     }
@@ -332,11 +332,11 @@ fn test_document_symbols() -> pbls::Result<()> {
                     uri: uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 17,
+                            line: 18,
                             character: 0
                         },
                         end: Position {
-                            line: 19,
+                            line: 20,
                             character: 1
                         }
                     }
@@ -353,11 +353,11 @@ fn test_document_symbols() -> pbls::Result<()> {
                     uri: uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 21,
+                            line: 22,
                             character: 0
                         },
                         end: Position {
-                            line: 21,
+                            line: 22,
                             character: 16
                         }
                     }
@@ -479,7 +479,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
                             character: 0
                         },
                         end: Position {
-                            line: 15,
+                            line: 16,
                             character: 1
                         }
                     }
@@ -497,11 +497,11 @@ fn test_workspace_symbols() -> pbls::Result<()> {
                     uri: base_uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 17,
+                            line: 18,
                             character: 0
                         },
                         end: Position {
-                            line: 19,
+                            line: 20,
                             character: 1
                         }
                     }
@@ -518,11 +518,11 @@ fn test_workspace_symbols() -> pbls::Result<()> {
                     uri: base_uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 21,
+                            line: 22,
                             character: 0
                         },
                         end: Position {
-                            line: 21,
+                            line: 22,
                             character: 16
                         }
                     }
@@ -538,8 +538,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
 fn test_goto_definition_same_file() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
 
-    let uri =
-        Url::from_file_path(std::path::Path::new("testdata/simple.proto").canonicalize()?).unwrap();
+    let uri = Url::from_file_path(std::fs::canonicalize("testdata/simple.proto")?).unwrap();
 
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
@@ -598,7 +597,7 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
             text_document_position_params: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier { uri: uri.clone() },
                 position: Position {
-                    line: 18,
+                    line: 19,
                     character: 2,
                 },
             },
@@ -613,12 +612,67 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
                         character: 0
                     },
                     end: Position {
-                        line: 15,
+                        line: 16,
                         character: 1
                     }
                 }
             }))
         );
     }
+    Ok(())
+}
+
+#[test]
+fn test_goto_definition_different_file() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+
+    let src_uri = Url::from_file_path(std::fs::canonicalize("testdata/simple.proto")?).unwrap();
+    let dst_uri = Url::from_file_path(std::fs::canonicalize("testdata/dep.proto")?).unwrap();
+
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: src_uri.clone(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    client.recv::<PublishDiagnostics>()?;
+
+    // goto Dep message
+    let resp = client.request::<GotoDefinition>(GotoDefinitionParams {
+        work_done_progress_params: lsp_types::WorkDoneProgressParams {
+            work_done_token: None,
+        },
+        partial_result_params: lsp_types::PartialResultParams {
+            partial_result_token: None,
+        },
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: src_uri.clone(),
+            },
+            position: Position {
+                line: 15,
+                character: 5,
+            },
+        },
+    })?;
+    assert_eq!(
+        resp,
+        Some(GotoDefinitionResponse::Scalar(Location {
+            uri: dst_uri.clone(),
+            range: Range {
+                start: Position {
+                    line: 4,
+                    character: 0
+                },
+                end: Position {
+                    line: 6,
+                    character: 1
+                }
+            }
+        }))
+    );
+
     Ok(())
 }

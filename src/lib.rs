@@ -373,16 +373,13 @@ fn get_definition(params: GotoDefinitionParams, conf: &Config) -> Result<GotoDef
     eprintln!("Getting definition for {word}");
 
     // Find the symbol matching the word
-    let syms = file_to_symbols(uri.clone(), &conf)?;
+    let syms = workspace_symbols(&conf)?;
     let sym = syms
         .iter()
         .find(|x| x.name == word)
         .ok_or(format!("Symbol for '{word}' not found"))?;
 
-    Ok(GotoDefinitionResponse::Scalar(Location {
-        uri,
-        range: sym.location.range,
-    }))
+    Ok(GotoDefinitionResponse::Scalar(sym.location.clone()))
 }
 
 fn workspace_symbols(conf: &Config) -> Result<Vec<SymbolInformation>> {
