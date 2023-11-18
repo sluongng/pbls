@@ -1,12 +1,14 @@
+use core::panic;
 use lsp_server::{Connection, Message};
 use lsp_types::notification::{DidOpenTextDocument, PublishDiagnostics};
 use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Shutdown, WorkspaceSymbolRequest};
 use lsp_types::{notification::Initialized, request::Initialize, InitializedParams};
 use lsp_types::{
     Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams, DocumentSymbolParams,
-    GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, Location, Position,
-    PublishDiagnosticsParams, Range, SymbolInformation, SymbolKind, TextDocumentIdentifier,
-    TextDocumentItem, TextDocumentPositionParams, Url, WorkspaceSymbolParams,
+    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, InitializeParams,
+    Location, Position, PublishDiagnosticsParams, Range, SymbolInformation, SymbolKind,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
+    WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use pbls::Result;
 use pretty_assertions::assert_eq;
@@ -16,6 +18,18 @@ struct TestClient {
     conn: Connection,
     thread: Option<std::thread::JoinHandle<()>>,
     id: i32,
+}
+
+fn assert_elements_equal<T, K, F>(mut a: Vec<T>, mut b: Vec<T>, key: F)
+where
+    T: Clone + std::fmt::Debug + std::cmp::PartialEq,
+    K: Ord,
+    F: Clone + FnMut(&T) -> K,
+{
+    a.sort_by_key(key.clone());
+    b.sort_by_key(key);
+
+    assert_eq!(a, b);
 }
 
 impl TestClient {
@@ -150,6 +164,7 @@ fn test_diagnostics() -> pbls::Result<()> {
         },
     })?;
     let diags = client.recv::<PublishDiagnostics>()?;
+    assert_eq!(diags.uri, uri);
     let base_diag = Diagnostic {
         range: Range {
             start: Position {
@@ -165,57 +180,54 @@ fn test_diagnostics() -> pbls::Result<()> {
         source: Some("pbls".into()),
         ..Default::default()
     };
-    assert_eq!(
-        diags,
-        PublishDiagnosticsParams {
-            uri,
-            diagnostics: vec![
-                Diagnostic {
-                    range: Range {
-                        start: Position {
-                            line: 16,
-                            character: 0
-                        },
-                        end: Position {
-                            line: 16,
-                            character: 318
-                        }
+    assert_elements_equal(
+        diags.diagnostics,
+        vec![
+            Diagnostic {
+                range: Range {
+                    start: Position {
+                        line: 16,
+                        character: 0,
                     },
-                    message: "\"f\" is already defined in \"main.Bar\".".into(),
-                    ..base_diag.clone()
+                    end: Position {
+                        line: 16,
+                        character: 318,
+                    },
                 },
-                Diagnostic {
-                    range: Range {
-                        start: Position {
-                            line: 11,
-                            character: 0
-                        },
-                        end: Position {
-                            line: 11,
-                            character: 44
-                        }
+                message: "\"f\" is already defined in \"main.Bar\".".into(),
+                ..base_diag.clone()
+            },
+            Diagnostic {
+                range: Range {
+                    start: Position {
+                        line: 11,
+                        character: 0,
                     },
-                    message: "\"Thingy\" is not defined.".into(),
-                    ..base_diag.clone()
+                    end: Position {
+                        line: 11,
+                        character: 44,
+                    },
                 },
-                Diagnostic {
-                    range: Range {
-                        start: Position {
-                            line: 16,
-                            character: 0
-                        },
-                        end: Position {
-                            line: 16,
-                            character: 88
-                        }
+                message: "\"Thingy\" is not defined.".into(),
+                ..base_diag.clone()
+            },
+            Diagnostic {
+                range: Range {
+                    start: Position {
+                        line: 16,
+                        character: 0,
                     },
-                    message: "Field number 1 has already been used in \"main.Bar\" by field \"f\""
-                        .into(),
-                    ..base_diag.clone()
-                }
-            ],
-            version: None
-        }
+                    end: Position {
+                        line: 16,
+                        character: 88,
+                    },
+                },
+                message: "Field number 1 has already been used in \"main.Bar\" by field \"f\""
+                    .into(),
+                ..base_diag.clone()
+            },
+        ],
+        |s| s.message.clone(),
     );
     Ok(())
 }
@@ -265,18 +277,22 @@ fn test_document_symbols() -> pbls::Result<()> {
     })?;
     client.recv::<PublishDiagnostics>()?;
 
-    let syms = client.request::<DocumentSymbolRequest>(DocumentSymbolParams {
-        text_document: TextDocumentIdentifier { uri: uri.clone() },
-        work_done_progress_params: lsp_types::WorkDoneProgressParams {
-            work_done_token: None,
-        },
-        partial_result_params: lsp_types::PartialResultParams {
-            partial_result_token: None,
-        },
-    })?;
-    assert_eq!(
-        syms,
-        Some(lsp_types::DocumentSymbolResponse::Flat(vec![
+    let Some(DocumentSymbolResponse::Flat(actual)) =
+        client.request::<DocumentSymbolRequest>(DocumentSymbolParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams {
+                work_done_token: None,
+            },
+            partial_result_params: lsp_types::PartialResultParams {
+                partial_result_token: None,
+            },
+        })?
+    else {
+        panic!("Expected DocumentSymbolResponse::Flat")
+    };
+    assert_elements_equal(
+        actual,
+        vec![
             // deprecated field is deprecated, but cannot be omitted
             #[allow(deprecated)]
             SymbolInformation {
@@ -289,13 +305,13 @@ fn test_document_symbols() -> pbls::Result<()> {
                     range: Range {
                         start: Position {
                             line: 7,
-                            character: 0
+                            character: 0,
                         },
                         end: Position {
                             line: 11,
-                            character: 1
-                        }
-                    }
+                            character: 1,
+                        },
+                    },
                 },
                 container_name: Some("main".into()),
             },
@@ -311,13 +327,13 @@ fn test_document_symbols() -> pbls::Result<()> {
                     range: Range {
                         start: Position {
                             line: 13,
-                            character: 0
+                            character: 0,
                         },
                         end: Position {
                             line: 17,
-                            character: 1
-                        }
-                    }
+                            character: 1,
+                        },
+                    },
                 },
                 container_name: Some("main".into()),
             },
@@ -333,13 +349,13 @@ fn test_document_symbols() -> pbls::Result<()> {
                     range: Range {
                         start: Position {
                             line: 19,
-                            character: 0
+                            character: 0,
                         },
                         end: Position {
                             line: 22,
-                            character: 1
-                        }
-                    }
+                            character: 1,
+                        },
+                    },
                 },
                 container_name: Some("main".into()),
             },
@@ -354,17 +370,18 @@ fn test_document_symbols() -> pbls::Result<()> {
                     range: Range {
                         start: Position {
                             line: 24,
-                            character: 0
+                            character: 0,
                         },
                         end: Position {
                             line: 24,
-                            character: 16
-                        }
-                    }
+                            character: 16,
+                        },
+                    },
                 },
                 container_name: Some("main".into()),
-            }
-        ]))
+            },
+        ],
+        |s| s.name.clone(),
     );
     Ok(())
 }
@@ -387,173 +404,175 @@ fn test_workspace_symbols() -> pbls::Result<()> {
     })?;
     client.recv::<PublishDiagnostics>()?;
 
-    let syms = client.request::<WorkspaceSymbolRequest>(WorkspaceSymbolParams {
-        query: "".into(),
-        work_done_progress_params: lsp_types::WorkDoneProgressParams {
-            work_done_token: None,
+    let Some(WorkspaceSymbolResponse::Flat(actual)) =
+        client.request::<WorkspaceSymbolRequest>(WorkspaceSymbolParams {
+            query: "".into(),
+            work_done_progress_params: lsp_types::WorkDoneProgressParams {
+                work_done_token: None,
+            },
+            partial_result_params: lsp_types::PartialResultParams {
+                partial_result_token: None,
+            },
+        })?
+    else {
+        panic!("Symbols response is not Flat")
+    };
+    let expected = vec![
+        // deprecated field is deprecated, but cannot be omitted
+        #[allow(deprecated)]
+        SymbolInformation {
+            name: "Other".into(),
+            kind: SymbolKind::STRUCT,
+            tags: None,
+            deprecated: None,
+            location: Location {
+                uri: other_uri,
+                range: Range {
+                    start: Position {
+                        line: 4,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 6,
+                        character: 1,
+                    },
+                },
+            },
+            container_name: Some("other".into()),
         },
-        partial_result_params: lsp_types::PartialResultParams {
-            partial_result_token: None,
+        // deprecated field is deprecated, but cannot be omitted
+        #[allow(deprecated)]
+        SymbolInformation {
+            name: "Dep".into(),
+            kind: SymbolKind::STRUCT,
+            tags: None,
+            deprecated: None,
+            location: Location {
+                uri: dep_uri.clone(),
+                range: Range {
+                    start: Position {
+                        line: 4,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 6,
+                        character: 1,
+                    },
+                },
+            },
+            container_name: Some("main".into()),
         },
-    })?;
-    assert_eq!(
-        syms,
-        Some(lsp_types::WorkspaceSymbolResponse::Flat(vec![
-            // deprecated field is deprecated, but cannot be omitted
-            #[allow(deprecated)]
-            SymbolInformation {
-                name: "Other".into(),
-                kind: SymbolKind::STRUCT,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: other_uri,
-                    range: Range {
-                        start: Position {
-                            line: 4,
-                            character: 0,
-                        },
-                        end: Position {
-                            line: 6,
-                            character: 1,
-                        },
+        // deprecated field is deprecated, but cannot be omitted
+        #[allow(deprecated)]
+        SymbolInformation {
+            name: "Dep2".into(),
+            kind: SymbolKind::ENUM,
+            tags: None,
+            deprecated: None,
+            location: Location {
+                uri: dep_uri.clone(),
+                range: Range {
+                    start: Position {
+                        line: 8,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 11,
+                        character: 1,
                     },
                 },
-                container_name: Some("other".into()),
             },
-            // deprecated field is deprecated, but cannot be omitted
-            #[allow(deprecated)]
-            SymbolInformation {
-                name: "Dep".into(),
-                kind: SymbolKind::STRUCT,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: dep_uri.clone(),
-                    range: Range {
-                        start: Position {
-                            line: 4,
-                            character: 0,
-                        },
-                        end: Position {
-                            line: 6,
-                            character: 1,
-                        },
+            container_name: Some("main".into()),
+        },
+        // deprecated field is deprecated, but cannot be omitted
+        #[allow(deprecated)]
+        SymbolInformation {
+            name: "Thing".into(),
+            kind: SymbolKind::ENUM,
+            tags: None,
+            deprecated: None,
+            location: Location {
+                uri: base_uri.clone(),
+                range: Range {
+                    start: Position {
+                        line: 7,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 11,
+                        character: 1,
                     },
                 },
-                container_name: Some("main".into()),
             },
-            // deprecated field is deprecated, but cannot be omitted
-            #[allow(deprecated)]
-            SymbolInformation {
-                name: "Dep2".into(),
-                kind: SymbolKind::ENUM,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: dep_uri.clone(),
-                    range: Range {
-                        start: Position {
-                            line: 8,
-                            character: 0,
-                        },
-                        end: Position {
-                            line: 11,
-                            character: 1,
-                        },
+            container_name: Some("main".into()),
+        },
+        // deprecated field is deprecated, but cannot be omitted
+        #[allow(deprecated)]
+        SymbolInformation {
+            name: "Foo".into(),
+            kind: SymbolKind::STRUCT,
+            tags: None,
+            deprecated: None,
+            location: Location {
+                uri: base_uri.clone(),
+                range: Range {
+                    start: Position {
+                        line: 13,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 17,
+                        character: 1,
                     },
                 },
-                container_name: Some("main".into()),
             },
-            // deprecated field is deprecated, but cannot be omitted
-            #[allow(deprecated)]
-            SymbolInformation {
-                name: "Thing".into(),
-                kind: SymbolKind::ENUM,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: base_uri.clone(),
-                    range: Range {
-                        start: Position {
-                            line: 7,
-                            character: 0
-                        },
-                        end: Position {
-                            line: 11,
-                            character: 1
-                        }
-                    }
+            container_name: Some("main".into()),
+        },
+        // deprecated field is deprecated, but cannot be omitted
+        #[allow(deprecated)]
+        SymbolInformation {
+            name: "Bar".into(),
+            kind: SymbolKind::STRUCT,
+            tags: None,
+            deprecated: None,
+            location: Location {
+                uri: base_uri.clone(),
+                range: Range {
+                    start: Position {
+                        line: 19,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 22,
+                        character: 1,
+                    },
                 },
-                container_name: Some("main".into()),
             },
-            // deprecated field is deprecated, but cannot be omitted
-            #[allow(deprecated)]
-            SymbolInformation {
-                name: "Foo".into(),
-                kind: SymbolKind::STRUCT,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: base_uri.clone(),
-                    range: Range {
-                        start: Position {
-                            line: 13,
-                            character: 0
-                        },
-                        end: Position {
-                            line: 17,
-                            character: 1
-                        }
-                    }
+            container_name: Some("main".into()),
+        },
+        #[allow(deprecated)]
+        SymbolInformation {
+            name: "Empty".into(),
+            kind: SymbolKind::STRUCT,
+            tags: None,
+            deprecated: None,
+            location: Location {
+                uri: base_uri.clone(),
+                range: Range {
+                    start: Position {
+                        line: 24,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 24,
+                        character: 16,
+                    },
                 },
-                container_name: Some("main".into()),
             },
-            // deprecated field is deprecated, but cannot be omitted
-            #[allow(deprecated)]
-            SymbolInformation {
-                name: "Bar".into(),
-                kind: SymbolKind::STRUCT,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: base_uri.clone(),
-                    range: Range {
-                        start: Position {
-                            line: 19,
-                            character: 0
-                        },
-                        end: Position {
-                            line: 22,
-                            character: 1
-                        }
-                    }
-                },
-                container_name: Some("main".into()),
-            },
-            #[allow(deprecated)]
-            SymbolInformation {
-                name: "Empty".into(),
-                kind: SymbolKind::STRUCT,
-                tags: None,
-                deprecated: None,
-                location: Location {
-                    uri: base_uri.clone(),
-                    range: Range {
-                        start: Position {
-                            line: 24,
-                            character: 0
-                        },
-                        end: Position {
-                            line: 24,
-                            character: 16
-                        }
-                    }
-                },
-                container_name: Some("main".into()),
-            }
-        ]))
-    );
+            container_name: Some("main".into()),
+        },
+    ];
+    assert_elements_equal(actual, expected, |s| s.name.clone());
     Ok(())
 }
 
