@@ -288,16 +288,16 @@ fn test_document_symbols() -> pbls::Result<()> {
                     uri: uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 6,
+                            line: 7,
                             character: 0
                         },
                         end: Position {
-                            line: 10,
+                            line: 11,
                             character: 1
                         }
                     }
                 },
-                container_name: None
+                container_name: Some("main".into()),
             },
             // deprecated field is deprecated, but cannot be omitted
             #[allow(deprecated)]
@@ -310,16 +310,16 @@ fn test_document_symbols() -> pbls::Result<()> {
                     uri: uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 12,
+                            line: 13,
                             character: 0
                         },
                         end: Position {
-                            line: 16,
+                            line: 17,
                             character: 1
                         }
                     }
                 },
-                container_name: None
+                container_name: Some("main".into()),
             },
             // deprecated field is deprecated, but cannot be omitted
             #[allow(deprecated)]
@@ -332,16 +332,16 @@ fn test_document_symbols() -> pbls::Result<()> {
                     uri: uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 18,
+                            line: 19,
                             character: 0
                         },
                         end: Position {
-                            line: 20,
+                            line: 22,
                             character: 1
                         }
                     }
                 },
-                container_name: None
+                container_name: Some("main".into()),
             },
             #[allow(deprecated)]
             SymbolInformation {
@@ -353,16 +353,16 @@ fn test_document_symbols() -> pbls::Result<()> {
                     uri: uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 22,
+                            line: 24,
                             character: 0
                         },
                         end: Position {
-                            line: 22,
+                            line: 24,
                             character: 16
                         }
                     }
                 },
-                container_name: None
+                container_name: Some("main".into()),
             }
         ]))
     );
@@ -375,6 +375,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
 
     let base_uri = Url::from_file_path(std::fs::canonicalize("testdata/simple.proto")?).unwrap();
     let dep_uri = Url::from_file_path(std::fs::canonicalize("testdata/dep.proto")?).unwrap();
+    let other_uri = Url::from_file_path(std::fs::canonicalize("testdata/other.proto")?).unwrap();
 
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
@@ -401,6 +402,28 @@ fn test_workspace_symbols() -> pbls::Result<()> {
             // deprecated field is deprecated, but cannot be omitted
             #[allow(deprecated)]
             SymbolInformation {
+                name: "Other".into(),
+                kind: SymbolKind::STRUCT,
+                tags: None,
+                deprecated: None,
+                location: Location {
+                    uri: other_uri,
+                    range: Range {
+                        start: Position {
+                            line: 4,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 6,
+                            character: 1,
+                        },
+                    },
+                },
+                container_name: Some("other".into()),
+            },
+            // deprecated field is deprecated, but cannot be omitted
+            #[allow(deprecated)]
+            SymbolInformation {
                 name: "Dep".into(),
                 kind: SymbolKind::STRUCT,
                 tags: None,
@@ -418,7 +441,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
                         },
                     },
                 },
-                container_name: None,
+                container_name: Some("main".into()),
             },
             // deprecated field is deprecated, but cannot be omitted
             #[allow(deprecated)]
@@ -440,7 +463,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
                         },
                     },
                 },
-                container_name: None,
+                container_name: Some("main".into()),
             },
             // deprecated field is deprecated, but cannot be omitted
             #[allow(deprecated)]
@@ -453,16 +476,16 @@ fn test_workspace_symbols() -> pbls::Result<()> {
                     uri: base_uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 6,
+                            line: 7,
                             character: 0
                         },
                         end: Position {
-                            line: 10,
+                            line: 11,
                             character: 1
                         }
                     }
                 },
-                container_name: None
+                container_name: Some("main".into()),
             },
             // deprecated field is deprecated, but cannot be omitted
             #[allow(deprecated)]
@@ -475,16 +498,16 @@ fn test_workspace_symbols() -> pbls::Result<()> {
                     uri: base_uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 12,
+                            line: 13,
                             character: 0
                         },
                         end: Position {
-                            line: 16,
+                            line: 17,
                             character: 1
                         }
                     }
                 },
-                container_name: None
+                container_name: Some("main".into()),
             },
             // deprecated field is deprecated, but cannot be omitted
             #[allow(deprecated)]
@@ -497,16 +520,16 @@ fn test_workspace_symbols() -> pbls::Result<()> {
                     uri: base_uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 18,
+                            line: 19,
                             character: 0
                         },
                         end: Position {
-                            line: 20,
+                            line: 22,
                             character: 1
                         }
                     }
                 },
-                container_name: None
+                container_name: Some("main".into()),
             },
             #[allow(deprecated)]
             SymbolInformation {
@@ -518,16 +541,16 @@ fn test_workspace_symbols() -> pbls::Result<()> {
                     uri: base_uri.clone(),
                     range: Range {
                         start: Position {
-                            line: 22,
+                            line: 24,
                             character: 0
                         },
                         end: Position {
-                            line: 22,
+                            line: 24,
                             character: 16
                         }
                     }
                 },
-                container_name: None
+                container_name: Some("main".into()),
             }
         ]))
     );
@@ -562,7 +585,7 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
             text_document_position_params: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier { uri: uri.clone() },
                 position: Position {
-                    line: 14,
+                    line: 15,
                     character: 5,
                 },
             },
@@ -573,11 +596,11 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
                 uri: uri.clone(),
                 range: Range {
                     start: Position {
-                        line: 6,
+                        line: 7,
                         character: 0
                     },
                     end: Position {
-                        line: 10,
+                        line: 11,
                         character: 1
                     }
                 }
@@ -597,7 +620,7 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
             text_document_position_params: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier { uri: uri.clone() },
                 position: Position {
-                    line: 19,
+                    line: 20,
                     character: 2,
                 },
             },
@@ -608,11 +631,11 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
                 uri: uri.clone(),
                 range: Range {
                     start: Position {
-                        line: 12,
+                        line: 13,
                         character: 0
                     },
                     end: Position {
-                        line: 16,
+                        line: 17,
                         character: 1
                     }
                 }
@@ -652,7 +675,7 @@ fn test_goto_definition_different_file() -> pbls::Result<()> {
                 uri: src_uri.clone(),
             },
             position: Position {
-                line: 15,
+                line: 16,
                 character: 5,
             },
         },

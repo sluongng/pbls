@@ -7,14 +7,13 @@ use lsp_types::{
     TextDocumentSyncSaveOptions, Url,
 };
 use lsp_types::{
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    Location, OneOf, Position, SymbolInformation, SymbolKind, WorkspaceSymbolParams,
-    WorkspaceSymbolResponse,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentSymbolParams,
+    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Location, OneOf,
+    Position, SymbolInformation, SymbolKind, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use protobuf::descriptor::{source_code_info, DescriptorProto, FileDescriptorProto};
 use protobuf_parse;
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::{error::Error, path};
 
 // Field numbers from https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L100-L101
@@ -153,18 +152,18 @@ pub fn run(connection: Connection) -> Result<()> {
             Message::Response(_) => {}
             Message::Notification(not) => match not.method.as_str() {
                 DidOpenTextDocument::METHOD => {
-                    if let Ok(params) = notification::<DidOpenTextDocument>(not) {
-                        eprintln!("Handling DidOpenTextDocument: {}", params.text_document.uri);
-                        let resp = on_open(params.text_document.uri, &conf)?;
-                        connection.sender.send(Message::Notification(resp))?;
-                    }
+                    let params =
+                        not.extract::<DidOpenTextDocumentParams>(DidOpenTextDocument::METHOD)?;
+                    eprintln!("Handling DidOpenTextDocument: {}", params.text_document.uri);
+                    let resp = on_open(params.text_document.uri, &conf)?;
+                    connection.sender.send(Message::Notification(resp))?;
                 }
                 DidSaveTextDocument::METHOD => {
-                    if let Ok(params) = notification::<DidSaveTextDocument>(not) {
-                        eprintln!("Handling DidSaveTextDocument: {}", params.text_document.uri);
-                        let resp = on_open(params.text_document.uri, &conf)?;
-                        connection.sender.send(Message::Notification(resp))?;
-                    }
+                    let params =
+                        not.extract::<DidSaveTextDocumentParams>(DidSaveTextDocument::METHOD)?;
+                    eprintln!("Handling DidSaveTextDocument: {}", params.text_document.uri);
+                    let resp = on_open(params.text_document.uri, &conf)?;
+                    connection.sender.send(Message::Notification(resp))?;
                 }
                 _ => {}
             },
@@ -341,9 +340,9 @@ fn location_to_symbol(
             uri: uri.clone(),
             range: Range { start, end },
         },
+        container_name: fd.package.clone(),
         tags: None,
         deprecated: None,
-        container_name: None,
     })
 }
 
@@ -417,16 +416,6 @@ fn get_workspace_symbols(conf: &Config) -> Result<WorkspaceSymbolResponse> {
     Ok(WorkspaceSymbolResponse::Flat(workspace_symbols(conf)?))
 }
 
-fn notification<N>(
-    not: lsp_server::Notification,
-) -> std::result::Result<N::Params, ExtractError<lsp_server::Notification>>
-where
-    N: lsp_types::notification::Notification,
-    N::Params: serde::de::DeserializeOwned,
-{
-    not.extract(N::METHOD)
-}
-
 fn on_open(uri: Url, conf: &Config) -> Result<lsp_server::Notification> {
     if uri.scheme() != "file" {
         Err(format!("Unsupported scheme: {}", uri))?
@@ -434,7 +423,9 @@ fn on_open(uri: Url, conf: &Config) -> Result<lsp_server::Notification> {
     let diags = match parse(uri.path(), conf) {
         Ok(_) => Vec::<Diagnostic>::new(),
         Err(err) => {
-            let err = err.source().ok_or("Parse error missing source")?;
+            let err = err
+                .source()
+                .ok_or(format!("Parse error missing source {err}"))?;
             eprintln!("Parsing diagnostics from {}", err);
             get_diagnostics(err)?
         }

@@ -3,6 +3,7 @@ syntax = "proto3";
 package main;
 
 import "dep.proto";
+import "other.proto";
 
 enum Thing {
   THING_FOO = 0;
@@ -18,6 +19,7 @@ message Foo {
 
 message Bar {
   Foo f = 1;
+  other.Other other = 2;
 }
 
 message Empty {}
