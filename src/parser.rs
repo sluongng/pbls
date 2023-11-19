@@ -13,6 +13,7 @@ const NESTED_ENUM_TYPE: i32 = 4;
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+#[derive(Clone)]
 pub enum ParseResult {
     Syms(Vec<SymbolInformation>),
     Diags(Vec<Diagnostic>),
@@ -20,7 +21,7 @@ pub enum ParseResult {
 
 pub struct Parser {
     proto_paths: Vec<String>,
-    files: HashMap<String, Result<ParseResult>>,
+    files: HashMap<Url, ParseResult>,
 }
 
 impl Parser {
@@ -35,7 +36,7 @@ impl Parser {
     // Returns a list of symbols if the file parsed.
     // Returns a list of diagnostics if the file failed to parse.
     // Either way, the result is cached for quick access next time.
-    pub fn parse(&self, uri: Url) -> Result<ParseResult> {
+    pub fn parse(&mut self, uri: Url) -> Result<ParseResult> {
         if uri.scheme() != "file" {
             Err(format!("Unsupported URI scheme {uri}"))?;
         }
@@ -55,26 +56,31 @@ impl Parser {
                 .map(|p| std::fs::canonicalize(p).unwrap()),
         );
 
-        match parser.file_descriptor_set() {
-            Ok(fds) => Ok(ParseResult::Syms(get_symbols(
+        let result = match parser.file_descriptor_set() {
+            Ok(fds) => ParseResult::Syms(get_symbols(
                 uri.clone(),
                 fds.file
                     .first()
                     .ok_or(format!("No results parsing {uri}"))?,
-            ))),
-            Err(err) => Ok(ParseResult::Diags(get_diagnostics(
+            )),
+            Err(err) => ParseResult::Diags(get_diagnostics(
                 err.source()
                     .ok_or(format!("Parse error missing source: {err}"))?,
-            ))),
-        }
+            )),
+        };
+
+        self.files.insert(uri, result.clone());
+
+        Ok(result)
     }
 
     // Parse all proto files found in the proto path, caching all results.
     // Returns a list of symbols across all files that parsed.
     // Parsing failures are ignored.
-    pub fn parse_all(&self) -> Result<Vec<SymbolInformation>> {
+    pub fn parse_all(&mut self) -> Result<Vec<SymbolInformation>> {
         Ok(self
             .proto_paths
+            .to_owned()
             .iter()
             .filter_map(|p| std::fs::read_dir(p).ok())
             .flatten()
