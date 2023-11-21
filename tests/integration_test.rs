@@ -14,6 +14,130 @@ use pbls::Result;
 use pretty_assertions::assert_eq;
 use std::error::Error;
 
+fn base_uri() -> Url {
+    Url::from_file_path(std::fs::canonicalize("./testdata/simple.proto").unwrap()).unwrap()
+}
+
+fn other_uri() -> Url {
+    Url::from_file_path(std::fs::canonicalize("./testdata/other.proto").unwrap()).unwrap()
+}
+
+fn dep_uri() -> Url {
+    Url::from_file_path(std::fs::canonicalize("./testdata/dep.proto").unwrap()).unwrap()
+}
+
+fn foo_location() -> Location {
+    Location {
+        uri: base_uri(),
+        range: Range {
+            start: Position {
+                line: 13,
+                character: 0,
+            },
+            end: Position {
+                line: 17,
+                character: 1,
+            },
+        },
+    }
+}
+
+fn bar_location() -> Location {
+    Location {
+        uri: base_uri(),
+        range: Range {
+            start: Position {
+                line: 19,
+                character: 0,
+            },
+            end: Position {
+                line: 22,
+                character: 1,
+            },
+        },
+    }
+}
+
+fn empty_location() -> Location {
+    Location {
+        uri: base_uri(),
+        range: Range {
+            start: Position {
+                line: 24,
+                character: 0,
+            },
+            end: Position {
+                line: 24,
+                character: 16,
+            },
+        },
+    }
+}
+
+fn other_location() -> Location {
+    Location {
+        uri: other_uri(),
+        range: Range {
+            start: Position {
+                line: 4,
+                character: 0,
+            },
+            end: Position {
+                line: 6,
+                character: 1,
+            },
+        },
+    }
+}
+
+fn dep_location() -> Location {
+    Location {
+        uri: dep_uri(),
+        range: Range {
+            start: Position {
+                line: 4,
+                character: 0,
+            },
+            end: Position {
+                line: 6,
+                character: 1,
+            },
+        },
+    }
+}
+
+fn dep2_location() -> Location {
+    Location {
+        uri: dep_uri(),
+        range: Range {
+            start: Position {
+                line: 8,
+                character: 0,
+            },
+            end: Position {
+                line: 11,
+                character: 1,
+            },
+        },
+    }
+}
+
+fn thing_location() -> Location {
+    Location {
+        uri: base_uri(),
+        range: Range {
+            start: Position {
+                line: 7,
+                character: 0,
+            },
+            end: Position {
+                line: 11,
+                character: 1,
+            },
+        },
+    }
+}
+
 struct TestClient {
     conn: Connection,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -322,19 +446,7 @@ fn test_document_symbols() -> pbls::Result<()> {
                 kind: SymbolKind::STRUCT,
                 tags: None,
                 deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: Range {
-                        start: Position {
-                            line: 13,
-                            character: 0,
-                        },
-                        end: Position {
-                            line: 17,
-                            character: 1,
-                        },
-                    },
-                },
+                location: foo_location(),
                 container_name: Some("main".into()),
             },
             // deprecated field is deprecated, but cannot be omitted
@@ -344,19 +456,7 @@ fn test_document_symbols() -> pbls::Result<()> {
                 kind: SymbolKind::STRUCT,
                 tags: None,
                 deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: Range {
-                        start: Position {
-                            line: 19,
-                            character: 0,
-                        },
-                        end: Position {
-                            line: 22,
-                            character: 1,
-                        },
-                    },
-                },
+                location: bar_location(),
                 container_name: Some("main".into()),
             },
             #[allow(deprecated)]
@@ -365,19 +465,7 @@ fn test_document_symbols() -> pbls::Result<()> {
                 kind: SymbolKind::STRUCT,
                 tags: None,
                 deprecated: None,
-                location: Location {
-                    uri: uri.clone(),
-                    range: Range {
-                        start: Position {
-                            line: 24,
-                            character: 0,
-                        },
-                        end: Position {
-                            line: 24,
-                            character: 16,
-                        },
-                    },
-                },
+                location: empty_location(),
                 container_name: Some("main".into()),
             },
         ],
@@ -390,13 +478,9 @@ fn test_document_symbols() -> pbls::Result<()> {
 fn test_workspace_symbols() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
 
-    let base_uri = Url::from_file_path(std::fs::canonicalize("testdata/simple.proto")?).unwrap();
-    let dep_uri = Url::from_file_path(std::fs::canonicalize("testdata/dep.proto")?).unwrap();
-    let other_uri = Url::from_file_path(std::fs::canonicalize("testdata/other.proto")?).unwrap();
-
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
-            uri: base_uri.clone(),
+            uri: base_uri(),
             language_id: "".into(),
             version: 0,
             text: "".into(),
@@ -425,19 +509,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
             kind: SymbolKind::STRUCT,
             tags: None,
             deprecated: None,
-            location: Location {
-                uri: other_uri,
-                range: Range {
-                    start: Position {
-                        line: 4,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 6,
-                        character: 1,
-                    },
-                },
-            },
+            location: other_location(),
             container_name: Some("other".into()),
         },
         // deprecated field is deprecated, but cannot be omitted
@@ -447,19 +519,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
             kind: SymbolKind::STRUCT,
             tags: None,
             deprecated: None,
-            location: Location {
-                uri: dep_uri.clone(),
-                range: Range {
-                    start: Position {
-                        line: 4,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 6,
-                        character: 1,
-                    },
-                },
-            },
+            location: dep_location(),
             container_name: Some("main".into()),
         },
         // deprecated field is deprecated, but cannot be omitted
@@ -469,19 +529,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
             kind: SymbolKind::ENUM,
             tags: None,
             deprecated: None,
-            location: Location {
-                uri: dep_uri.clone(),
-                range: Range {
-                    start: Position {
-                        line: 8,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 11,
-                        character: 1,
-                    },
-                },
-            },
+            location: dep2_location(),
             container_name: Some("main".into()),
         },
         // deprecated field is deprecated, but cannot be omitted
@@ -491,19 +539,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
             kind: SymbolKind::ENUM,
             tags: None,
             deprecated: None,
-            location: Location {
-                uri: base_uri.clone(),
-                range: Range {
-                    start: Position {
-                        line: 7,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 11,
-                        character: 1,
-                    },
-                },
-            },
+            location: thing_location(),
             container_name: Some("main".into()),
         },
         // deprecated field is deprecated, but cannot be omitted
@@ -513,19 +549,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
             kind: SymbolKind::STRUCT,
             tags: None,
             deprecated: None,
-            location: Location {
-                uri: base_uri.clone(),
-                range: Range {
-                    start: Position {
-                        line: 13,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 17,
-                        character: 1,
-                    },
-                },
-            },
+            location: foo_location(),
             container_name: Some("main".into()),
         },
         // deprecated field is deprecated, but cannot be omitted
@@ -535,19 +559,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
             kind: SymbolKind::STRUCT,
             tags: None,
             deprecated: None,
-            location: Location {
-                uri: base_uri.clone(),
-                range: Range {
-                    start: Position {
-                        line: 19,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 22,
-                        character: 1,
-                    },
-                },
-            },
+            location: bar_location(),
             container_name: Some("main".into()),
         },
         #[allow(deprecated)]
@@ -556,19 +568,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
             kind: SymbolKind::STRUCT,
             tags: None,
             deprecated: None,
-            location: Location {
-                uri: base_uri.clone(),
-                range: Range {
-                    start: Position {
-                        line: 24,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 24,
-                        character: 16,
-                    },
-                },
-            },
+            location: empty_location(),
             container_name: Some("main".into()),
         },
     ];
@@ -580,11 +580,9 @@ fn test_workspace_symbols() -> pbls::Result<()> {
 fn test_goto_definition_same_file() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
 
-    let uri = Url::from_file_path(std::fs::canonicalize("testdata/simple.proto")?).unwrap();
-
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
-            uri: uri.clone(),
+            uri: base_uri(),
             language_id: "".into(),
             version: 0,
             text: "".into(),
@@ -602,29 +600,14 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
                 partial_result_token: None,
             },
             text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri: uri.clone() },
+                text_document: TextDocumentIdentifier { uri: base_uri() },
                 position: Position {
                     line: 15,
                     character: 5,
                 },
             },
         })?;
-        assert_eq!(
-            resp,
-            Some(GotoDefinitionResponse::Scalar(Location {
-                uri: uri.clone(),
-                range: Range {
-                    start: Position {
-                        line: 7,
-                        character: 0
-                    },
-                    end: Position {
-                        line: 11,
-                        character: 1
-                    }
-                }
-            }))
-        );
+        assert_eq!(resp, Some(GotoDefinitionResponse::Scalar(thing_location())));
     }
 
     // goto Foo message
@@ -637,29 +620,14 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
                 partial_result_token: None,
             },
             text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri: uri.clone() },
+                text_document: TextDocumentIdentifier { uri: base_uri() },
                 position: Position {
                     line: 20,
                     character: 2,
                 },
             },
         })?;
-        assert_eq!(
-            resp,
-            Some(GotoDefinitionResponse::Scalar(Location {
-                uri: uri.clone(),
-                range: Range {
-                    start: Position {
-                        line: 13,
-                        character: 0
-                    },
-                    end: Position {
-                        line: 17,
-                        character: 1
-                    }
-                }
-            }))
-        );
+        assert_eq!(resp, Some(GotoDefinitionResponse::Scalar(foo_location())));
     }
     Ok(())
 }
