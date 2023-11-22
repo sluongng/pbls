@@ -26,6 +26,35 @@ fn dep_uri() -> Url {
     Url::from_file_path(std::fs::canonicalize("./testdata/dep.proto").unwrap()).unwrap()
 }
 
+// generate a GotoDefinition request for a line containing `text`,
+// with the cursor offset from the start of the search string by `offset`
+fn goto(uri: Url, text: &str, column: u32) -> GotoDefinitionParams {
+    let filetext = std::fs::read_to_string(uri.to_file_path().unwrap()).unwrap();
+    let (lineno, line) = filetext
+        .lines()
+        .enumerate()
+        .skip_while(|(_, l)| !l.contains(text))
+        .next()
+        .unwrap_or_else(|| panic!("{text} not found in {uri}"));
+
+    let character = line.chars().take_while(|c| c.is_whitespace()).count();
+    GotoDefinitionParams {
+        work_done_progress_params: lsp_types::WorkDoneProgressParams {
+            work_done_token: None,
+        },
+        partial_result_params: lsp_types::PartialResultParams {
+            partial_result_token: None,
+        },
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: base_uri() },
+            position: Position {
+                line: lineno.try_into().unwrap(),
+                character: column + u32::try_from(character).unwrap(),
+            },
+        },
+    }
+}
+
 fn foo_location() -> Location {
     Location {
         uri: base_uri(),
@@ -35,8 +64,24 @@ fn foo_location() -> Location {
                 character: 0,
             },
             end: Position {
-                line: 17,
+                line: 19,
                 character: 1,
+            },
+        },
+    }
+}
+
+fn buz_location() -> Location {
+    Location {
+        uri: base_uri(),
+        range: Range {
+            start: Position {
+                line: 18,
+                character: 2,
+            },
+            end: Position {
+                line: 18,
+                character: 16,
             },
         },
     }
@@ -47,11 +92,11 @@ fn bar_location() -> Location {
         uri: base_uri(),
         range: Range {
             start: Position {
-                line: 19,
+                line: 21,
                 character: 0,
             },
             end: Position {
-                line: 22,
+                line: 24,
                 character: 1,
             },
         },
@@ -63,11 +108,11 @@ fn empty_location() -> Location {
         uri: base_uri(),
         range: Range {
             start: Position {
-                line: 24,
+                line: 26,
                 character: 0,
             },
             end: Position {
-                line: 24,
+                line: 26,
                 character: 16,
             },
         },
@@ -449,6 +494,15 @@ fn test_document_symbols() -> pbls::Result<()> {
                 location: foo_location(),
                 container_name: Some("main".into()),
             },
+            #[allow(deprecated)]
+            SymbolInformation {
+                name: "Foo.Buz".into(),
+                kind: SymbolKind::STRUCT,
+                tags: None,
+                deprecated: None,
+                location: buz_location(),
+                container_name: Some("main".into()),
+            },
             // deprecated field is deprecated, but cannot be omitted
             #[allow(deprecated)]
             SymbolInformation {
@@ -555,6 +609,16 @@ fn test_workspace_symbols() -> pbls::Result<()> {
         // deprecated field is deprecated, but cannot be omitted
         #[allow(deprecated)]
         SymbolInformation {
+            name: "Foo.Buz".into(),
+            kind: SymbolKind::STRUCT,
+            tags: None,
+            deprecated: None,
+            location: buz_location(),
+            container_name: Some("main".into()),
+        },
+        // deprecated field is deprecated, but cannot be omitted
+        #[allow(deprecated)]
+        SymbolInformation {
             name: "Bar".into(),
             kind: SymbolKind::STRUCT,
             tags: None,
@@ -590,45 +654,16 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
     })?;
     client.recv::<PublishDiagnostics>()?;
 
-    // goto Thing enum
-    {
-        let resp = client.request::<GotoDefinition>(GotoDefinitionParams {
-            work_done_progress_params: lsp_types::WorkDoneProgressParams {
-                work_done_token: None,
-            },
-            partial_result_params: lsp_types::PartialResultParams {
-                partial_result_token: None,
-            },
-            text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri: base_uri() },
-                position: Position {
-                    line: 15,
-                    character: 5,
-                },
-            },
-        })?;
-        assert_eq!(resp, Some(GotoDefinitionResponse::Scalar(thing_location())));
-    }
+    assert_eq!(
+        client.request::<GotoDefinition>(goto(base_uri(), "Thing t =", 3))?,
+        Some(GotoDefinitionResponse::Scalar(thing_location()))
+    );
 
-    // goto Foo message
-    {
-        let resp = client.request::<GotoDefinition>(GotoDefinitionParams {
-            work_done_progress_params: lsp_types::WorkDoneProgressParams {
-                work_done_token: None,
-            },
-            partial_result_params: lsp_types::PartialResultParams {
-                partial_result_token: None,
-            },
-            text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri: base_uri() },
-                position: Position {
-                    line: 20,
-                    character: 2,
-                },
-            },
-        })?;
-        assert_eq!(resp, Some(GotoDefinitionResponse::Scalar(foo_location())));
-    }
+    assert_eq!(
+        client.request::<GotoDefinition>(goto(base_uri(), "Foo f =", 2))?,
+        Some(GotoDefinitionResponse::Scalar(foo_location()))
+    );
+
     Ok(())
 }
 
@@ -649,24 +684,7 @@ fn test_goto_definition_different_file() -> pbls::Result<()> {
     })?;
     client.recv::<PublishDiagnostics>()?;
 
-    // goto Dep message
-    let resp = client.request::<GotoDefinition>(GotoDefinitionParams {
-        work_done_progress_params: lsp_types::WorkDoneProgressParams {
-            work_done_token: None,
-        },
-        partial_result_params: lsp_types::PartialResultParams {
-            partial_result_token: None,
-        },
-        text_document_position_params: TextDocumentPositionParams {
-            text_document: TextDocumentIdentifier {
-                uri: src_uri.clone(),
-            },
-            position: Position {
-                line: 16,
-                character: 5,
-            },
-        },
-    })?;
+    let resp = client.request::<GotoDefinition>(goto(base_uri(), "Dep d =", 0))?;
     assert_eq!(
         resp,
         Some(GotoDefinitionResponse::Scalar(Location {
