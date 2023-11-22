@@ -95,22 +95,21 @@ fn handle_goto_definition(
         .find(|c: char| c.is_whitespace())
         .map(|n| n + charno)
         .unwrap_or(line.len());
-    let fullname = &line[fore..aft];
-    eprintln!("Getting definition for {fullname}");
+    let name = &line[fore..aft];
+    eprintln!("Getting definition for {name}");
 
-    let (pkg, name) = fullname.rsplit_once(".").unwrap_or(("", fullname));
-
-    // Find the symbol matching the word
     let syms = parser.parse_all()?;
 
-    // If pkg is empty, it refers to a type within the same package as the edited proto file.
-    // Otherwise, we check for that name in another package.
     let sym = syms
         .iter()
         .find(|x| {
-            x.name == name && (pkg == "" || x.container_name.as_ref().map_or(false, |c| c == pkg))
+            name == x.name
+                || match &x.container_name {
+                    Some(pkg) => name == pkg.to_owned() + "." + &x.name,
+                    None => false,
+                }
         })
-        .ok_or(format!("Symbol for '{fullname}' not found"))?;
+        .ok_or(format!("Symbol for '{name}' not found"))?;
 
     Ok(Some(GotoDefinitionResponse::Scalar(sym.location.clone())))
 }

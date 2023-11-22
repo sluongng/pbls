@@ -22,6 +22,8 @@ message Foo {
 message Bar {
   Foo f = 1;
   other.Other other = 2;
+  Foo.Buz buz = 3;
+  other.Other.Nested other_nested = 4;
 }
 
 message Empty {}

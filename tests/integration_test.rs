@@ -507,6 +507,15 @@ fn test_workspace_symbols() -> pbls::Result<()> {
             location: locate(base_uri(), "message Empty"),
             container_name: Some("main".into()),
         },
+        #[allow(deprecated)]
+        SymbolInformation {
+            name: "Other.Nested".into(),
+            kind: SymbolKind::STRUCT,
+            tags: None,
+            deprecated: None,
+            location: locate(other_uri(), "message Nested"),
+            container_name: Some("other".into()),
+        },
     ];
     assert_elements_equal(actual, expected, |s| s.name.clone());
     Ok(())
@@ -546,6 +555,31 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
 }
 
 #[test]
+fn test_goto_definition_same_file_nested() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: base_uri(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    client.recv::<PublishDiagnostics>()?;
+
+    assert_eq!(
+        client.request::<GotoDefinition>(goto(base_uri(), "Foo.Buz buz =", 6))?,
+        Some(GotoDefinitionResponse::Scalar(locate(
+            base_uri(),
+            "message Buz"
+        )))
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_goto_definition_different_file() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
 
@@ -565,6 +599,36 @@ fn test_goto_definition_different_file() -> pbls::Result<()> {
         Some(GotoDefinitionResponse::Scalar(locate(
             dep_uri(),
             "message Dep",
+        )))
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_goto_definition_different_file_nested() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: base_uri().clone(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    client.recv::<PublishDiagnostics>()?;
+
+    let resp = client.request::<GotoDefinition>(goto(
+        base_uri(),
+        "other.Other.Nested other_nested =",
+        0,
+    ))?;
+    assert_eq!(
+        resp,
+        Some(GotoDefinitionResponse::Scalar(locate(
+            other_uri(),
+            "message Nested",
         )))
     );
 
