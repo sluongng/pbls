@@ -16,7 +16,7 @@ message Foo {
   Thing t = 2;
   Dep d = 3;
 
-  message Buz {};
+  message Buz {}
 }
 
 message Bar {
