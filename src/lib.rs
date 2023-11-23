@@ -2,7 +2,7 @@ mod parser;
 use parser::ParseResult;
 use parser::Parser;
 
-use lsp_server::{Connection, Message, Response};
+use lsp_server::{Connection, Message};
 use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Request, WorkspaceSymbolRequest};
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
@@ -22,6 +22,97 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 #[derive(Debug, serde::Deserialize)]
 struct Config {
     proto_paths: Vec<String>,
+}
+
+fn handle<Req>(
+    parser: &mut parser::Parser,
+    req: lsp_server::Request,
+    handler: impl Fn(&mut parser::Parser, Req::Params) -> Result<Req::Result>,
+) -> Result<lsp_server::Message>
+where
+    Req: lsp_types::request::Request,
+{
+    let (id, params) = req.extract::<Req::Params>(Req::METHOD)?;
+    Ok(Message::Response(match handler(parser, params) {
+        Ok(resp) => lsp_server::Response {
+            id,
+            result: Some(serde_json::to_value(resp)?),
+            error: None,
+        },
+        Err(err) => lsp_server::Response {
+            id,
+            result: None,
+            error: Some(lsp_server::ResponseError {
+                code: lsp_server::ErrorCode::InternalError as i32,
+                message: err.to_string(),
+                data: None,
+            }),
+        },
+    }))
+}
+
+fn handle_document_symbols(
+    parser: &mut parser::Parser,
+    params: DocumentSymbolParams,
+) -> Result<Option<DocumentSymbolResponse>> {
+    match parser.parse(params.text_document.uri)? {
+        ParseResult::Syms(syms) => Ok(Some(DocumentSymbolResponse::Flat(syms))),
+        ParseResult::Diags(_) => Err("File cannot be parsed".into()),
+    }
+}
+
+fn handle_workspace_symbols(
+    parser: &mut parser::Parser,
+    _: WorkspaceSymbolParams,
+) -> Result<Option<lsp_types::WorkspaceSymbolResponse>> {
+    Ok(Some(lsp_types::WorkspaceSymbolResponse::Flat(
+        parser.parse_all()?,
+    )))
+}
+
+fn handle_goto_definition(
+    parser: &mut Parser,
+    params: GotoDefinitionParams,
+) -> Result<Option<GotoDefinitionResponse>> {
+    let uri = params.text_document_position_params.text_document.uri;
+    let path = uri.path();
+    let pos = params.text_document_position_params.position;
+
+    // Find the word under the cursor
+    let text = fs::read_to_string(uri.path())?;
+    let lineno: usize = pos.line.try_into()?;
+    let charno: usize = pos.character.try_into()?;
+    let line = text
+        .lines()
+        .skip(lineno)
+        .next()
+        .ok_or(format!("Line {lineno} out of range in file {path}"))?;
+    let fore = line[..charno]
+        .rfind(|c: char| c.is_whitespace())
+        .map(|n| n + 1)
+        .unwrap_or(0);
+    let aft = line[charno..]
+        .find(|c: char| c.is_whitespace())
+        .map(|n| n + charno)
+        .unwrap_or(line.len());
+    let fullname = &line[fore..aft];
+    eprintln!("Getting definition for {fullname}");
+
+    let (pkg, name) = fullname.rsplit_once(".").unwrap_or(("", fullname));
+
+    // Find the symbol matching the word
+    let syms = parser.parse_all()?;
+
+    // If pkg is empty, it refers to a type within the same package as the edited proto file.
+    // Otherwise, we check for that name in another package.
+    let sym = syms
+        .iter()
+        .find(|x| {
+            x.name == name && (pkg == "" || x.container_name.as_ref().map_or(false, |c| c == pkg))
+        })
+        .ok_or(format!("Symbol for '{fullname}' not found"))?;
+
+    Ok(Some(GotoDefinitionResponse::Scalar(sym.location.clone())))
 }
 
 pub fn run(connection: Connection) -> Result<()> {
@@ -76,76 +167,26 @@ pub fn run(connection: Connection) -> Result<()> {
                     eprintln!("Shutting down");
                     return Ok(());
                 }
-                match req.method.as_str() {
-                    DocumentSymbolRequest::METHOD => {
-                        let (id, params) =
-                            req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)?;
-                        let resp = match parser.parse(params.text_document.uri)? {
-                            ParseResult::Syms(syms) => Response {
-                                id,
-                                result: Some(serde_json::to_value(DocumentSymbolResponse::Flat(
-                                    syms,
-                                ))?),
-                                error: None,
-                            },
-                            ParseResult::Diags(_) => Response {
-                                id,
-                                result: None,
-                                error: Some(lsp_server::ResponseError {
-                                    code: lsp_server::ErrorCode::InternalError as i32,
-                                    message: "File cannot be parsed".into(),
-                                    data: None,
-                                }),
-                            },
-                        };
-                        connection.sender.send(Message::Response(resp))?;
-                        continue;
-                    }
-                    WorkspaceSymbolRequest::METHOD => {
-                        let (id, params) =
-                            req.extract::<WorkspaceSymbolParams>(WorkspaceSymbolRequest::METHOD)?;
-                        let resp = match parser.parse_all() {
-                            Ok(result) => Response {
-                                id,
-                                result: Some(serde_json::to_value(&result)?),
-                                error: None,
-                            },
-                            Err(err) => Response {
-                                id,
-                                result: None,
-                                error: Some(lsp_server::ResponseError {
-                                    code: lsp_server::ErrorCode::InternalError as i32,
-                                    message: err.to_string(),
-                                    data: None,
-                                }),
-                            },
-                        };
-                        connection.sender.send(Message::Response(resp))?;
-                        continue;
-                    }
-                    GotoDefinition::METHOD => {
-                        let (id, params) =
-                            req.extract::<GotoDefinitionParams>(GotoDefinition::METHOD)?;
-                        let resp = match get_definition(&mut parser, params) {
-                            Ok(result) => Response {
-                                id,
-                                result: Some(serde_json::to_value(&result)?),
-                                error: None,
-                            },
-                            Err(err) => Response {
-                                id,
-                                result: None,
-                                error: Some(lsp_server::ResponseError {
-                                    code: lsp_server::ErrorCode::InternalError as i32,
-                                    message: err.to_string(),
-                                    data: None,
-                                }),
-                            },
-                        };
-                        connection.sender.send(Message::Response(resp))?;
-                        continue;
-                    }
-                    _ => {}
+                let resp = match req.method.as_str() {
+                    DocumentSymbolRequest::METHOD => Some(handle::<DocumentSymbolRequest>(
+                        &mut parser,
+                        req,
+                        handle_document_symbols,
+                    )),
+                    WorkspaceSymbolRequest::METHOD => Some(handle::<WorkspaceSymbolRequest>(
+                        &mut parser,
+                        req,
+                        handle_workspace_symbols,
+                    )),
+                    GotoDefinition::METHOD => Some(handle::<GotoDefinition>(
+                        &mut parser,
+                        req,
+                        handle_goto_definition,
+                    )),
+                    _ => None,
+                };
+                if let Some(resp) = resp {
+                    connection.sender.send(resp?)?;
                 }
             }
             Message::Response(_) => {}
@@ -170,55 +211,6 @@ pub fn run(connection: Connection) -> Result<()> {
     }
     Ok(())
 }
-
-fn get_definition(
-    parser: &mut Parser,
-    params: GotoDefinitionParams,
-) -> Result<GotoDefinitionResponse> {
-    let uri = params.text_document_position_params.text_document.uri;
-    let path = uri.path();
-    let pos = params.text_document_position_params.position;
-
-    // Find the word under the cursor
-    let text = fs::read_to_string(uri.path())?;
-    let lineno: usize = pos.line.try_into()?;
-    let charno: usize = pos.character.try_into()?;
-    let line = text
-        .lines()
-        .skip(lineno)
-        .next()
-        .ok_or(format!("Line {lineno} out of range in file {path}"))?;
-    let fore = line[..charno]
-        .rfind(|c: char| c.is_whitespace())
-        .map(|n| n + 1)
-        .unwrap_or(0);
-    let aft = line[charno..]
-        .find(|c: char| c.is_whitespace())
-        .map(|n| n + charno)
-        .unwrap_or(line.len());
-    let fullname = &line[fore..aft];
-    eprintln!("Getting definition for {fullname}");
-
-    let (pkg, name) = fullname.rsplit_once(".").unwrap_or(("", fullname));
-
-    // Find the symbol matching the word
-    let syms = parser.parse_all()?;
-
-    // If pkg is empty, it refers to a type within the same package as the edited proto file.
-    // Otherwise, we check for that name in another package.
-    let sym = syms
-        .iter()
-        .find(|x| {
-            x.name == name && (pkg == "" || x.container_name.as_ref().map_or(false, |c| c == pkg))
-        })
-        .ok_or(format!("Symbol for '{fullname}' not found"))?;
-
-    Ok(GotoDefinitionResponse::Scalar(sym.location.clone()))
-}
-
-// fn get_workspace_symbols(conf: &Config) -> Result<WorkspaceSymbolResponse> {
-//     Ok(WorkspaceSymbolResponse::Flat(workspace_symbols(conf)?))
-// }
 
 fn on_open(uri: Url, parser: &mut Parser) -> Result<lsp_server::Notification> {
     let diags = match parser.parse(uri.clone())? {
