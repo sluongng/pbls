@@ -41,15 +41,16 @@ impl Parser {
             Err(format!("Unsupported URI scheme {uri}"))?;
         }
 
+        let path = uri
+            .to_file_path()
+            .or(Err(format!("Failed to normalize URI path: {uri}")))?;
+
         let mut parser = protobuf_parse::Parser::new();
         // The protoc parser gives more useful and consistent error messages
         parser.protoc();
         parser.protoc_extra_args(vec!["--include_source_info"]);
         parser.capture_stderr();
-        parser.input(
-            uri.to_file_path()
-                .or(Err(format!("Failed to normalize URI path: {uri}")))?,
-        );
+        parser.input(&path);
         parser.includes(
             self.proto_paths
                 .iter()
@@ -66,6 +67,7 @@ impl Parser {
             Err(err) => ParseResult::Diags(get_diagnostics(
                 err.source()
                     .ok_or(format!("Parse error missing source: {err}"))?,
+                std::fs::read_to_string(path)?,
             )),
         };
 
@@ -99,13 +101,12 @@ impl Parser {
     }
 }
 
-fn get_diagnostics(err: impl Error) -> Vec<Diagnostic> {
-    let mut vec = Vec::<Diagnostic>::new();
+fn get_diagnostics(err: impl Error, file_contents: String) -> Vec<Diagnostic> {
     // Errors are delineated by literal \n.
-    for diag in err.to_string().split("\\n").filter_map(|l| parse_diag(l)) {
-        vec.push(diag);
-    }
-    vec
+    err.to_string()
+        .split("\\n")
+        .filter_map(|l| parse_diag(l, &file_contents))
+        .collect()
 }
 
 fn get_symbols(uri: Url, fd: &FileDescriptorProto) -> Vec<SymbolInformation> {
@@ -121,24 +122,31 @@ fn get_symbols(uri: Url, fd: &FileDescriptorProto) -> Vec<SymbolInformation> {
 // foo.proto:4:13: "int" is not defined
 // Other lines do not contain location info.
 // We'll return None to skip these, as usually another line contains the location.
-fn parse_diag(line: &str) -> Option<lsp_types::Diagnostic> {
-    eprintln!("Parsing diag {line}");
-    let (_, rest) = line.split_once(".proto:")?;
+fn parse_diag(diag: &str, file_contents: &String) -> Option<lsp_types::Diagnostic> {
+    eprintln!("Parsing diagnostic {diag}");
+    let (_, rest) = diag.split_once(".proto:")?;
     let (linestr, rest) = rest.split_once(':')?;
     let (_, msg) = rest.split_once(':')?;
     let msg = msg.strip_suffix(".\"").unwrap_or(msg).replace("\\\"", "\"");
 
-    let lineno = linestr.parse::<u32>().unwrap();
+    // Lines from protoc stderr are 1-indexed.
+    let lineno = linestr.parse::<u32>().unwrap() - 1;
+    let line = file_contents.lines().skip(lineno.try_into().ok()?).next()?;
+    let start = line.find(|c: char| !c.is_whitespace()).unwrap_or(0);
+    let end = line
+        .rfind(|c: char| !c.is_whitespace())
+        .map(|c| c + 1) // include the final character
+        .unwrap_or(line.len());
 
     Some(lsp_types::Diagnostic {
         range: Range {
             start: lsp_types::Position {
-                line: lineno - 1,
-                character: 0,
+                line: lineno,
+                character: start.try_into().ok()?,
             },
             end: lsp_types::Position {
-                line: lineno - 1,
-                character: line.len().try_into().unwrap(),
+                line: lineno,
+                character: end.try_into().ok()?,
             },
         },
         severity: Some(DiagnosticSeverity::ERROR),

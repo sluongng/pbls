@@ -37,7 +37,7 @@ fn goto(uri: Url, text: &str, column: u32) -> GotoDefinitionParams {
         .next()
         .unwrap_or_else(|| panic!("{text} not found in {uri}"));
 
-    let character = line.chars().take_while(|c| c.is_whitespace()).count();
+    let character = line.find(|c: char| !c.is_whitespace()).unwrap_or(0);
     GotoDefinitionParams {
         work_done_progress_params: lsp_types::WorkDoneProgressParams {
             work_done_token: None,
@@ -249,16 +249,6 @@ fn test_diagnostics() -> pbls::Result<()> {
     let diags = client.recv::<PublishDiagnostics>()?;
     assert_eq!(diags.uri, uri);
     let base_diag = Diagnostic {
-        range: Range {
-            start: Position {
-                line: 16,
-                character: 0,
-            },
-            end: Position {
-                line: 16,
-                character: 318,
-            },
-        },
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some("pbls".into()),
         ..Default::default()
@@ -267,44 +257,12 @@ fn test_diagnostics() -> pbls::Result<()> {
         diags.diagnostics,
         vec![
             Diagnostic {
-                range: Range {
-                    start: Position {
-                        line: 16,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 16,
-                        character: 318,
-                    },
-                },
-                message: "\"f\" is already defined in \"main.Bar\".".into(),
-                ..base_diag.clone()
-            },
-            Diagnostic {
-                range: Range {
-                    start: Position {
-                        line: 11,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 11,
-                        character: 44,
-                    },
-                },
+                range: locate(uri.clone(), "Thingy t =").range,
                 message: "\"Thingy\" is not defined.".into(),
                 ..base_diag.clone()
             },
             Diagnostic {
-                range: Range {
-                    start: Position {
-                        line: 16,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 16,
-                        character: 88,
-                    },
-                },
+                range: locate(uri, "int32 foo =").range,
                 message: "Field number 1 has already been used in \"main.Bar\" by field \"f\""
                     .into(),
                 ..base_diag.clone()

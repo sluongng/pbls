@@ -14,6 +14,6 @@ message Foo {
 
 message Bar {
   Foo f = 1;
-  Foo f = 1;
+  int32 foo = 1;
 }
 
