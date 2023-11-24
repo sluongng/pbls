@@ -1,4 +1,5 @@
 mod parser;
+use lsp_types::DocumentDiagnosticParams;
 use parser::ParseResult;
 use parser::Parser;
 
@@ -94,6 +95,23 @@ fn handle_workspace_symbols(
     Ok(Some(lsp_types::WorkspaceSymbolResponse::Flat(
         parser.parse_all()?,
     )))
+}
+
+fn handle_document_diagnostics(
+    parser: &mut parser::Parser,
+    params: lsp_types::DocumentDiagnosticParams,
+) -> Result<lsp_types::DocumentDiagnosticReportResult> {
+    Ok(match parser.parse(params.text_document.uri)? {
+        ParseResult::Syms(_) => lsp_types::DocumentDiagnosticReportResult::Report(
+            lsp_types::DocumentDiagnosticReport::Full(
+                lsp_types::RelatedFullDocumentDiagnosticReport {
+                    related_documents: todo!(),
+                    full_document_diagnostic_report: todo!(),
+                },
+            ),
+        ),
+        ParseResult::Diags(_) => Err("File cannot be parsed".into()),
+    })
 }
 
 fn handle_goto_definition(
@@ -247,6 +265,13 @@ pub fn run(connection: Connection) -> Result<()> {
                         req,
                         handle_workspace_symbols,
                     )),
+                    lsp_types::request::DocumentDiagnosticRequest::METHOD => {
+                        Some(handle::<lsp_types::request::DocumentDiagnosticRequest>(
+                            &mut parser,
+                            req,
+                            handle_document_diagnostics,
+                        ))
+                    }
                     GotoDefinition::METHOD => Some(handle::<GotoDefinition>(
                         &mut parser,
                         req,
