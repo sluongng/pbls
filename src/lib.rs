@@ -194,14 +194,24 @@ pub fn run(connection: Connection) -> Result<()> {
                     let params =
                         not.extract::<DidOpenTextDocumentParams>(DidOpenTextDocument::METHOD)?;
                     eprintln!("Handling DidOpenTextDocument: {}", params.text_document.uri);
-                    let resp = on_open(params.text_document.uri, &mut parser)?;
-                    connection.sender.send(Message::Notification(resp))?;
+                    match on_open(params.text_document.uri, &mut parser) {
+                        Ok(resp) => connection.sender.send(Message::Notification(resp)),
+                        Err(err) => connection.sender.send(Message::Notification(
+                            lsp_server::Notification {
+                                method: lsp_types::notification::ShowMessage::METHOD.into(),
+                                params: serde_json::to_value(lsp_types::ShowMessageParams {
+                                    typ: lsp_types::MessageType::ERROR,
+                                    message: err.to_string(),
+                                })?,
+                            },
+                        )),
+                    }?;
                 }
                 DidSaveTextDocument::METHOD => {
                     let params =
                         not.extract::<DidSaveTextDocumentParams>(DidSaveTextDocument::METHOD)?;
                     eprintln!("Handling DidSaveTextDocument: {}", params.text_document.uri);
-                    let resp = on_open(params.text_document.uri, &mut parser)?;
+                    let resp = on_save(params.text_document.uri, &mut parser)?;
                     connection.sender.send(Message::Notification(resp))?;
                 }
                 _ => {}
@@ -213,6 +223,24 @@ pub fn run(connection: Connection) -> Result<()> {
 
 fn on_open(uri: Url, parser: &mut Parser) -> Result<lsp_server::Notification> {
     let diags = match parser.parse(uri.clone())? {
+        ParseResult::Syms(_) => Vec::<Diagnostic>::new(),
+        ParseResult::Diags(diags) => diags,
+    };
+
+    let params = lsp_types::PublishDiagnosticsParams {
+        uri,
+        diagnostics: diags,
+        version: None,
+    };
+
+    Ok(lsp_server::Notification {
+        method: PublishDiagnostics::METHOD.into(),
+        params: serde_json::to_value(&params)?,
+    })
+}
+
+fn on_save(uri: Url, parser: &mut Parser) -> Result<lsp_server::Notification> {
+    let diags = match parser.reparse(uri.clone())? {
         ParseResult::Syms(_) => Vec::<Diagnostic>::new(),
         ParseResult::Diags(diags) => diags,
     };

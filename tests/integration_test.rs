@@ -1,13 +1,13 @@
 use core::panic;
 use lsp_server::{Connection, Message};
-use lsp_types::notification::{DidOpenTextDocument, PublishDiagnostics};
+use lsp_types::notification::{DidOpenTextDocument, DidSaveTextDocument, PublishDiagnostics};
 use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Shutdown, WorkspaceSymbolRequest};
 use lsp_types::{notification::Initialized, request::Initialize, InitializedParams};
 use lsp_types::{
-    Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams, DocumentSymbolParams,
-    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, InitializeParams,
-    Location, Position, PublishDiagnosticsParams, Range, SymbolInformation, SymbolKind,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
+    Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    InitializeParams, Location, Position, PublishDiagnosticsParams, Range, SymbolInformation,
+    SymbolKind, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
     WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use pbls::Result;
@@ -97,12 +97,6 @@ fn locate(uri: Url, name: &str) -> Location {
     }
 }
 
-struct TestClient {
-    conn: Connection,
-    thread: Option<std::thread::JoinHandle<()>>,
-    id: i32,
-}
-
 fn assert_elements_equal<T, K, F>(mut a: Vec<T>, mut b: Vec<T>, key: F)
 where
     T: Clone + std::fmt::Debug + std::cmp::PartialEq,
@@ -115,8 +109,53 @@ where
     assert_eq!(a, b);
 }
 
+struct TempDir(std::path::PathBuf);
+
+impl TempDir {
+    fn new() -> TempDir {
+        let path = std::env::temp_dir().join("pbls-test");
+        std::fs::create_dir_all(&path).unwrap();
+        TempDir(path)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.0).unwrap();
+    }
+}
+
+impl AsRef<std::path::Path> for TempDir {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for TempDir {
+    type Target = std::path::PathBuf;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for TempDir {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+struct TestClient {
+    conn: Connection,
+    thread: Option<std::thread::JoinHandle<()>>,
+    id: i32,
+}
+
 impl TestClient {
     fn new() -> Result<TestClient> {
+        Self::new_with_root("testdata")
+    }
+
+    fn new_with_root(path: impl AsRef<std::path::Path>) -> Result<TestClient> {
         let (client, server) = Connection::memory();
         let thread = std::thread::spawn(|| {
             pbls::run(server).unwrap();
@@ -128,7 +167,7 @@ impl TestClient {
         };
 
         client.request::<Initialize>(InitializeParams {
-            root_uri: Some(Url::from_file_path(std::fs::canonicalize("testdata")?).unwrap()),
+            root_uri: Some(Url::from_file_path(std::fs::canonicalize(path).unwrap()).unwrap()),
             ..Default::default()
         })?;
         client.notify::<Initialized>(InitializedParams {})?;
@@ -203,7 +242,7 @@ fn test_start_stop() -> pbls::Result<()> {
 }
 
 #[test]
-fn test_open_ok() -> pbls::Result<()> {
+fn test_open() -> pbls::Result<()> {
     let client = TestClient::new()?;
 
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
@@ -223,6 +262,77 @@ fn test_open_ok() -> pbls::Result<()> {
             version: None,
         }
     );
+    Ok(())
+}
+
+#[test]
+fn test_save() -> pbls::Result<()> {
+    let tmp = TempDir::new();
+    let path = tmp.join("example.proto");
+    let uri = Url::from_file_path(&path).unwrap();
+    let client = TestClient::new_with_root(&tmp)?;
+
+    std::fs::write(
+        &path,
+        r#"
+syntax = "proto3";
+package main;
+message Foo{}
+        "#,
+    )?;
+
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    let diags = client.recv::<PublishDiagnostics>()?;
+    assert_eq!(
+        diags,
+        PublishDiagnosticsParams {
+            uri: uri.clone(),
+            diagnostics: vec![],
+            version: None,
+        }
+    );
+
+    // modify the file, check that we pick up the change
+    std::fs::write(
+        &path,
+        r#"
+syntax = "proto3";
+package main;
+message Foo{Flob flob = 1;}
+        "#,
+    )?;
+
+    client.notify::<DidSaveTextDocument>(DidSaveTextDocumentParams {
+        text_document: TextDocumentIdentifier { uri: uri.clone() },
+        text: None, // we just re-read the file from disk
+    })?;
+    let diags = client.recv::<PublishDiagnostics>()?;
+    assert_eq!(
+        diags,
+        PublishDiagnosticsParams {
+            uri: uri.clone(),
+            diagnostics: vec![Diagnostic {
+                range: locate(uri, "message Foo{Flob flob = 1;}").range,
+                severity: Some(DiagnosticSeverity::ERROR),
+                code: None,
+                code_description: None,
+                source: Some("pbls".into()),
+                message: "\"Flob\" is not defined".into(),
+                related_information: None,
+                tags: None,
+                data: None,
+            },],
+            version: None,
+        }
+    );
+
     Ok(())
 }
 
@@ -331,22 +441,9 @@ fn test_document_symbols() -> pbls::Result<()> {
                 kind: SymbolKind::ENUM,
                 tags: None,
                 deprecated: None,
-                location: Location {
-                    uri: base_uri().clone(),
-                    range: Range {
-                        start: Position {
-                            line: 7,
-                            character: 0,
-                        },
-                        end: Position {
-                            line: 11,
-                            character: 1,
-                        },
-                    },
-                },
+                location: locate(base_uri(), "enum Thing"),
                 container_name: Some("main".into()),
             },
-            // deprecated field is deprecated, but cannot be omitted
             #[allow(deprecated)]
             SymbolInformation {
                 name: "Foo".into(),
@@ -365,7 +462,6 @@ fn test_document_symbols() -> pbls::Result<()> {
                 location: locate(base_uri(), "message Buz"),
                 container_name: Some("main".into()),
             },
-            // deprecated field is deprecated, but cannot be omitted
             #[allow(deprecated)]
             SymbolInformation {
                 name: "Bar".into(),

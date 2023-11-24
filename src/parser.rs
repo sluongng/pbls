@@ -35,8 +35,8 @@ impl Parser {
     // Parse a single proto file.
     // Returns a list of symbols if the file parsed.
     // Returns a list of diagnostics if the file failed to parse.
-    // Either way, the result is cached for quick access next time.
-    pub fn parse(&mut self, uri: Url) -> Result<ParseResult> {
+    // Either way, the result is cached for re-access via `parse`.
+    pub fn reparse(&mut self, uri: Url) -> Result<ParseResult> {
         if uri.scheme() != "file" {
             Err(format!("Unsupported URI scheme {uri}"))?;
         }
@@ -76,9 +76,18 @@ impl Parser {
         Ok(result)
     }
 
+    // Like reparse, but use a cached result if available.
+    pub fn parse(&mut self, uri: Url) -> Result<ParseResult> {
+        match self.files.get(&uri) {
+            Some(cached) => Ok(cached.to_owned()),
+            None => self.reparse(uri),
+        }
+    }
+
     // Parse all proto files found in the proto path, caching all results.
     // Returns a list of symbols across all files that parsed.
     // Parsing failures are ignored.
+    // Uses cached results where available.
     pub fn parse_all(&mut self) -> Result<Vec<SymbolInformation>> {
         Ok(self
             .proto_paths
