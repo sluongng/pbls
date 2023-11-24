@@ -26,6 +26,27 @@ fn dep_uri() -> Url {
     Url::from_file_path(std::fs::canonicalize("./testdata/dep.proto").unwrap()).unwrap()
 }
 
+fn sym(uri: Url, pkg: &str, name: &str, text: &str) -> SymbolInformation {
+    // deprecated field is deprecated, but cannot be omitted
+    let kind = text
+        .split_once(" ")
+        .unwrap_or_else(|| panic!("Invalid symbol {text}"))
+        .0;
+    #[allow(deprecated)]
+    SymbolInformation {
+        name: name.into(),
+        kind: match kind {
+            "enum" => SymbolKind::ENUM,
+            "message" => SymbolKind::STRUCT,
+            _ => panic!("Invalid symbol {text}"),
+        },
+        tags: None,
+        deprecated: None,
+        location: locate(uri, text),
+        container_name: Some(pkg.into()),
+    }
+}
+
 // Generate a GotoDefinition request for a line containing `text`,
 // with the cursor offset from the start of the search string by `offset`
 fn goto(uri: Url, text: &str, column: u32) -> GotoDefinitionParams {
@@ -434,52 +455,11 @@ fn test_document_symbols() -> pbls::Result<()> {
     assert_elements_equal(
         actual,
         vec![
-            // deprecated field is deprecated, but cannot be omitted
-            #[allow(deprecated)]
-            SymbolInformation {
-                name: "Thing".into(),
-                kind: SymbolKind::ENUM,
-                tags: None,
-                deprecated: None,
-                location: locate(base_uri(), "enum Thing"),
-                container_name: Some("main".into()),
-            },
-            #[allow(deprecated)]
-            SymbolInformation {
-                name: "Foo".into(),
-                kind: SymbolKind::STRUCT,
-                tags: None,
-                deprecated: None,
-                location: locate(base_uri(), "message Foo"),
-                container_name: Some("main".into()),
-            },
-            #[allow(deprecated)]
-            SymbolInformation {
-                name: "Foo.Buz".into(),
-                kind: SymbolKind::STRUCT,
-                tags: None,
-                deprecated: None,
-                location: locate(base_uri(), "message Buz"),
-                container_name: Some("main".into()),
-            },
-            #[allow(deprecated)]
-            SymbolInformation {
-                name: "Bar".into(),
-                kind: SymbolKind::STRUCT,
-                tags: None,
-                deprecated: None,
-                location: locate(base_uri(), "message Bar"),
-                container_name: Some("main".into()),
-            },
-            #[allow(deprecated)]
-            SymbolInformation {
-                name: "Empty".into(),
-                kind: SymbolKind::STRUCT,
-                tags: None,
-                deprecated: None,
-                location: locate(base_uri(), "message Empty"),
-                container_name: Some("main".into()),
-            },
+            sym(base_uri(), "main", "Thing", "enum Thing"),
+            sym(base_uri(), "main", "Foo", "message Foo"),
+            sym(base_uri(), "main", "Foo.Buz", "message Buz"),
+            sym(base_uri(), "main", "Bar", "message Bar"),
+            sym(base_uri(), "main", "Empty", "message Empty"),
         ],
         |s| s.name.clone(),
     );
@@ -514,94 +494,15 @@ fn test_workspace_symbols() -> pbls::Result<()> {
         panic!("Symbols response is not Flat")
     };
     let expected = vec![
-        // deprecated field is deprecated, but cannot be omitted
-        #[allow(deprecated)]
-        SymbolInformation {
-            name: "Other".into(),
-            kind: SymbolKind::STRUCT,
-            tags: None,
-            deprecated: None,
-            location: locate(other_uri(), "message Other"),
-            container_name: Some("other".into()),
-        },
-        // deprecated field is deprecated, but cannot be omitted
-        #[allow(deprecated)]
-        SymbolInformation {
-            name: "Dep".into(),
-            kind: SymbolKind::STRUCT,
-            tags: None,
-            deprecated: None,
-            location: locate(dep_uri(), "message Dep"),
-            container_name: Some("main".into()),
-        },
-        // deprecated field is deprecated, but cannot be omitted
-        #[allow(deprecated)]
-        SymbolInformation {
-            name: "Dep2".into(),
-            kind: SymbolKind::ENUM,
-            tags: None,
-            deprecated: None,
-            location: locate(dep_uri(), "enum Dep2"),
-            container_name: Some("main".into()),
-        },
-        // deprecated field is deprecated, but cannot be omitted
-        #[allow(deprecated)]
-        SymbolInformation {
-            name: "Thing".into(),
-            kind: SymbolKind::ENUM,
-            tags: None,
-            deprecated: None,
-            location: locate(base_uri(), "enum Thing"),
-            container_name: Some("main".into()),
-        },
-        // deprecated field is deprecated, but cannot be omitted
-        #[allow(deprecated)]
-        SymbolInformation {
-            name: "Foo".into(),
-            kind: SymbolKind::STRUCT,
-            tags: None,
-            deprecated: None,
-            location: locate(base_uri(), "message Foo"),
-            container_name: Some("main".into()),
-        },
-        // deprecated field is deprecated, but cannot be omitted
-        #[allow(deprecated)]
-        SymbolInformation {
-            name: "Foo.Buz".into(),
-            kind: SymbolKind::STRUCT,
-            tags: None,
-            deprecated: None,
-            location: locate(base_uri(), "message Buz"),
-            container_name: Some("main".into()),
-        },
-        // deprecated field is deprecated, but cannot be omitted
-        #[allow(deprecated)]
-        SymbolInformation {
-            name: "Bar".into(),
-            kind: SymbolKind::STRUCT,
-            tags: None,
-            deprecated: None,
-            location: locate(base_uri(), "message Bar"),
-            container_name: Some("main".into()),
-        },
-        #[allow(deprecated)]
-        SymbolInformation {
-            name: "Empty".into(),
-            kind: SymbolKind::STRUCT,
-            tags: None,
-            deprecated: None,
-            location: locate(base_uri(), "message Empty"),
-            container_name: Some("main".into()),
-        },
-        #[allow(deprecated)]
-        SymbolInformation {
-            name: "Other.Nested".into(),
-            kind: SymbolKind::STRUCT,
-            tags: None,
-            deprecated: None,
-            location: locate(other_uri(), "message Nested"),
-            container_name: Some("other".into()),
-        },
+        sym(other_uri(), "other", "Other", "message Other"),
+        sym(dep_uri(), "main", "Dep", "message Dep"),
+        sym(dep_uri(), "main", "Dep2", "enum Dep2"),
+        sym(base_uri(), "main", "Thing", "enum Thing"),
+        sym(base_uri(), "main", "Foo", "message Foo"),
+        sym(base_uri(), "main", "Foo.Buz", "message Buz"),
+        sym(base_uri(), "main", "Bar", "message Bar"),
+        sym(base_uri(), "main", "Empty", "message Empty"),
+        sym(other_uri(), "other", "Other.Nested", "message Nested"),
     ];
     assert_elements_equal(actual, expected, |s| s.name.clone());
     Ok(())
