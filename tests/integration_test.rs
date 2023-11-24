@@ -128,9 +128,7 @@ impl TestClient {
         };
 
         client.request::<Initialize>(InitializeParams {
-            root_uri: Some(
-                Url::from_file_path(std::path::Path::new("testdata").canonicalize()?).unwrap(),
-            ),
+            root_uri: Some(Url::from_file_path(std::fs::canonicalize("testdata")?).unwrap()),
             ..Default::default()
         })?;
         client.notify::<Initialized>(InitializedParams {})?;
@@ -208,12 +206,9 @@ fn test_start_stop() -> pbls::Result<()> {
 fn test_open_ok() -> pbls::Result<()> {
     let client = TestClient::new()?;
 
-    let uri =
-        Url::from_file_path(std::path::Path::new("testdata/simple.proto").canonicalize()?).unwrap();
-
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
-            uri: uri.clone(),
+            uri: base_uri(),
             language_id: "".into(),
             version: 0,
             text: "".into(),
@@ -223,7 +218,7 @@ fn test_open_ok() -> pbls::Result<()> {
     assert_eq!(
         diags,
         PublishDiagnosticsParams {
-            uri: uri,
+            uri: base_uri(),
             diagnostics: vec![],
             version: None,
         }
@@ -235,8 +230,7 @@ fn test_open_ok() -> pbls::Result<()> {
 fn test_diagnostics() -> pbls::Result<()> {
     let client = TestClient::new()?;
 
-    let uri =
-        Url::from_file_path(std::path::Path::new("testdata/error.proto").canonicalize()?).unwrap();
+    let uri = Url::from_file_path(std::fs::canonicalize("testdata/error.proto")?).unwrap();
 
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
@@ -277,12 +271,9 @@ fn test_diagnostics() -> pbls::Result<()> {
 fn test_no_diagnostics() -> pbls::Result<()> {
     let client = TestClient::new()?;
 
-    let uri =
-        Url::from_file_path(std::path::Path::new("testdata/simple.proto").canonicalize()?).unwrap();
-
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
-            uri: uri.clone(),
+            uri: base_uri(),
             language_id: "".into(),
             version: 0,
             text: "".into(),
@@ -293,7 +284,7 @@ fn test_no_diagnostics() -> pbls::Result<()> {
     assert_eq!(
         diags,
         PublishDiagnosticsParams {
-            uri,
+            uri: base_uri(),
             diagnostics: vec![],
             version: None
         }
@@ -305,12 +296,9 @@ fn test_no_diagnostics() -> pbls::Result<()> {
 fn test_document_symbols() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
 
-    let uri =
-        Url::from_file_path(std::path::Path::new("testdata/simple.proto").canonicalize()?).unwrap();
-
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
-            uri: uri.clone(),
+            uri: base_uri(),
             language_id: "".into(),
             version: 0,
             text: "".into(),
@@ -320,7 +308,9 @@ fn test_document_symbols() -> pbls::Result<()> {
 
     let Some(DocumentSymbolResponse::Flat(actual)) =
         client.request::<DocumentSymbolRequest>(DocumentSymbolParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text_document: TextDocumentIdentifier {
+                uri: base_uri().clone(),
+            },
             work_done_progress_params: lsp_types::WorkDoneProgressParams {
                 work_done_token: None,
             },
@@ -342,7 +332,7 @@ fn test_document_symbols() -> pbls::Result<()> {
                 tags: None,
                 deprecated: None,
                 location: Location {
-                    uri: uri.clone(),
+                    uri: base_uri().clone(),
                     range: Range {
                         start: Position {
                             line: 7,
