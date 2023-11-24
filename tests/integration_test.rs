@@ -3,7 +3,7 @@ use lsp_server::{Connection, Message};
 use lsp_types::notification::{DidOpenTextDocument, DidSaveTextDocument, PublishDiagnostics};
 use lsp_types::request::{
     DocumentDiagnosticRequest, DocumentSymbolRequest, GotoDefinition, Shutdown,
-    WorkspaceSymbolRequest,
+    WorkspaceDiagnosticRequest, WorkspaceSymbolRequest,
 };
 use lsp_types::{notification::Initialized, request::Initialize, InitializedParams};
 use lsp_types::{
@@ -11,7 +11,8 @@ use lsp_types::{
     DocumentDiagnosticParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
     GotoDefinitionResponse, InitializeParams, Location, Position, PublishDiagnosticsParams, Range,
     SymbolInformation, SymbolKind, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, Url, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    TextDocumentPositionParams, Url, WorkspaceDiagnosticParams, WorkspaceDocumentDiagnosticReport,
+    WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use pbls::Result;
 use pretty_assertions::assert_eq;
@@ -463,6 +464,48 @@ fn test_document_diagnostics() -> pbls::Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn test_workspace_diagnostics() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+
+    let uri = error_uri();
+
+    let resp = client.request::<WorkspaceDiagnosticRequest>(WorkspaceDiagnosticParams {
+        work_done_progress_params: lsp_types::WorkDoneProgressParams {
+            work_done_token: None,
+        },
+        partial_result_params: lsp_types::PartialResultParams {
+            partial_result_token: None,
+        },
+        identifier: None,
+        previous_result_ids: vec![],
+    })?;
+
+    let lsp_types::WorkspaceDiagnosticReportResult::Report(report) = resp else {
+        panic!("Unexpected response {resp:?}")
+    };
+    let report = report.items.first().unwrap();
+    let WorkspaceDocumentDiagnosticReport::Full(report) = report.clone() else {
+        panic!("Unexpected response {report:?}")
+    };
+
+    assert_eq!(uri, report.uri);
+    assert_elements_equal(
+        report.full_document_diagnostic_report.items,
+        vec![
+            diag(uri.clone(), "Thingy t =", "\"Thingy\" is not defined."),
+            diag(
+                uri,
+                "int32 foo =",
+                "Field number 1 has already been used in \"main.Bar\" by field \"f\"",
+            ),
+        ],
+        |s| s.message.clone(),
+    );
+    Ok(())
+}
+
 #[test]
 fn test_document_symbols() -> pbls::Result<()> {
     let mut client = TestClient::new()?;

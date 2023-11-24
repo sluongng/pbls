@@ -78,6 +78,7 @@ impl Parser {
 
     // Like reparse, but use a cached result if available.
     pub fn parse(&mut self, uri: Url) -> Result<ParseResult> {
+        eprintln!("Parsing {uri}");
         match self.files.get(&uri) {
             Some(cached) => Ok(cached.to_owned()),
             None => self.reparse(uri),
@@ -88,7 +89,7 @@ impl Parser {
     // Returns a list of symbols across all files that parsed.
     // Parsing failures are ignored.
     // Uses cached results where available.
-    pub fn parse_all(&mut self) -> Result<Vec<SymbolInformation>> {
+    pub fn parse_all(&mut self) -> Result<Vec<(Url, ParseResult)>> {
         Ok(self
             .proto_paths
             .to_owned()
@@ -100,12 +101,7 @@ impl Parser {
             .filter(|p| p.is_file() && p.extension().map_or(false, |e| e == "proto"))
             .filter_map(|p| std::fs::canonicalize(p).ok())
             .filter_map(|p| Url::from_file_path(p).ok())
-            .filter_map(|u| self.parse(u).ok())
-            .filter_map(|r| match r {
-                ParseResult::Syms(syms) => Some(syms),
-                ParseResult::Diags(_) => None,
-            })
-            .flatten()
+            .filter_map(|u| self.parse(u.clone()).map_or(None, |r| Some((u, r))))
             .collect())
     }
 }

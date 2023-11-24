@@ -1,4 +1,7 @@
 mod parser;
+use lsp_types::request::DocumentDiagnosticRequest;
+use lsp_types::request::WorkspaceDiagnosticRequest;
+use lsp_types::WorkspaceDocumentDiagnosticReport;
 use parser::ParseResult;
 use parser::Parser;
 
@@ -92,7 +95,16 @@ fn handle_workspace_symbols(
     _: WorkspaceSymbolParams,
 ) -> Result<Option<lsp_types::WorkspaceSymbolResponse>> {
     Ok(Some(lsp_types::WorkspaceSymbolResponse::Flat(
-        parser.parse_all()?,
+        parser
+            .parse_all()
+            .iter()
+            .flatten()
+            .filter_map(|r| match r {
+                (_, ParseResult::Syms(syms)) => Some(syms.to_owned()),
+                (_, ParseResult::Diags(_)) => None,
+            })
+            .flatten()
+            .collect(),
     )))
 }
 
@@ -113,6 +125,36 @@ fn handle_document_diagnostics(
                 items: diags,
             },
         }),
+    ))
+}
+
+fn handle_workspace_diagnostics(
+    parser: &mut parser::Parser,
+    _: lsp_types::WorkspaceDiagnosticParams,
+) -> Result<lsp_types::WorkspaceDiagnosticReportResult> {
+    let all = parser.parse_all()?;
+    let diags = all
+        .iter()
+        .filter_map(|r| match r {
+            (_, ParseResult::Syms(_)) => None,
+            (url, ParseResult::Diags(d)) => Some((url, d)),
+        })
+        .map(|(url, diags)| {
+            WorkspaceDocumentDiagnosticReport::Full(
+                lsp_types::WorkspaceFullDocumentDiagnosticReport {
+                    uri: url.clone(),
+                    version: None,
+                    full_document_diagnostic_report: lsp_types::FullDocumentDiagnosticReport {
+                        result_id: None,
+                        items: diags.to_owned(),
+                    },
+                },
+            )
+        })
+        .collect();
+
+    Ok(lsp_types::WorkspaceDiagnosticReportResult::Report(
+        lsp_types::WorkspaceDiagnosticReport { items: diags },
     ))
 }
 
@@ -144,10 +186,14 @@ fn handle_goto_definition(
     let name = &line[fore..aft];
     eprintln!("Getting definition for {name}");
 
-    let syms = parser.parse_all()?;
-
-    let sym = syms
+    let all = parser.parse_all()?;
+    let sym = all
         .iter()
+        .filter_map(|r| match r {
+            (_, ParseResult::Syms(syms)) => Some(syms),
+            (_, ParseResult::Diags(_)) => None,
+        })
+        .flatten()
         .find(|x| {
             name == x.name
                 || match &x.container_name {
@@ -218,7 +264,8 @@ pub fn run(connection: Connection) -> Result<()> {
         // completion_provider: Some(lsp_types::CompletionOptions::default()),
         diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
             lsp_types::DiagnosticOptions {
-                identifier: Some(String::from("spelgud")),
+                identifier: Some(String::from("pbls")),
+                workspace_diagnostics: true,
                 ..Default::default()
             },
         )),
@@ -267,11 +314,16 @@ pub fn run(connection: Connection) -> Result<()> {
                         req,
                         handle_workspace_symbols,
                     )),
-                    lsp_types::request::DocumentDiagnosticRequest::METHOD => {
-                        Some(handle::<lsp_types::request::DocumentDiagnosticRequest>(
+                    DocumentDiagnosticRequest::METHOD => Some(handle::<DocumentDiagnosticRequest>(
+                        &mut parser,
+                        req,
+                        handle_document_diagnostics,
+                    )),
+                    WorkspaceDiagnosticRequest::METHOD => {
+                        Some(handle::<WorkspaceDiagnosticRequest>(
                             &mut parser,
                             req,
-                            handle_document_diagnostics,
+                            handle_workspace_diagnostics,
                         ))
                     }
                     GotoDefinition::METHOD => Some(handle::<GotoDefinition>(
