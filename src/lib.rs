@@ -7,7 +7,7 @@ use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Request, Workspa
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
     Diagnostic, DiagnosticServerCapabilities, InitializeParams, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Url,
+    TextDocumentSyncCapability, TextDocumentSyncOptions, TextDocumentSyncSaveOptions,
 };
 use lsp_types::{
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentSymbolParams,
@@ -24,6 +24,7 @@ struct Config {
     proto_paths: Vec<String>,
 }
 
+// Handle a request, returning the response to send.
 fn handle<Req>(
     parser: &mut parser::Parser,
     req: lsp_server::Request,
@@ -49,6 +50,31 @@ where
             }),
         },
     }))
+}
+
+// Handle a notification, optionally returning a notification to send in response.
+fn notify<N>(
+    parser: &mut parser::Parser,
+    not: lsp_server::Notification,
+    handler: impl Fn(&mut parser::Parser, N::Params) -> Result<Option<lsp_server::Notification>>,
+) -> Result<Option<lsp_server::Message>>
+where
+    N: lsp_types::notification::Notification,
+{
+    let params = not.extract::<N::Params>(N::METHOD)?;
+    Ok(match handler(parser, params) {
+        Ok(Some(resp)) => Some(Message::Notification(resp)),
+        Ok(None) => None,
+        // If we get an error, we can't respond directly as with a Request.
+        // Instead, send a ShowMessage notification with the error.
+        Err(err) => Some(Message::Notification(lsp_server::Notification {
+            method: lsp_types::notification::ShowMessage::METHOD.into(),
+            params: serde_json::to_value(lsp_types::ShowMessageParams {
+                typ: lsp_types::MessageType::ERROR,
+                message: err.to_string(),
+            })?,
+        })),
+    })
 }
 
 fn handle_document_symbols(
@@ -112,6 +138,50 @@ fn handle_goto_definition(
         .ok_or(format!("Symbol for '{name}' not found"))?;
 
     Ok(Some(GotoDefinitionResponse::Scalar(sym.location.clone())))
+}
+
+fn notify_did_open(
+    parser: &mut Parser,
+    params: DidOpenTextDocumentParams,
+) -> Result<Option<lsp_server::Notification>> {
+    let uri = params.text_document.uri;
+    let diags = match parser.parse(uri.clone())? {
+        ParseResult::Syms(_) => Vec::<Diagnostic>::new(),
+        ParseResult::Diags(diags) => diags,
+    };
+
+    let params = lsp_types::PublishDiagnosticsParams {
+        uri,
+        diagnostics: diags,
+        version: None,
+    };
+
+    Ok(Some(lsp_server::Notification {
+        method: PublishDiagnostics::METHOD.into(),
+        params: serde_json::to_value(&params)?,
+    }))
+}
+
+fn notify_did_save(
+    parser: &mut Parser,
+    params: DidSaveTextDocumentParams,
+) -> Result<Option<lsp_server::Notification>> {
+    let uri = params.text_document.uri;
+    let diags = match parser.reparse(uri.clone())? {
+        ParseResult::Syms(_) => Vec::<Diagnostic>::new(),
+        ParseResult::Diags(diags) => diags,
+    };
+
+    let params = lsp_types::PublishDiagnosticsParams {
+        uri,
+        diagnostics: diags,
+        version: None,
+    };
+
+    Ok(Some(lsp_server::Notification {
+        method: PublishDiagnostics::METHOD.into(),
+        params: serde_json::to_value(&params)?,
+    }))
 }
 
 pub fn run(connection: Connection) -> Result<()> {
@@ -189,70 +259,21 @@ pub fn run(connection: Connection) -> Result<()> {
                 }
             }
             Message::Response(_) => {}
-            Message::Notification(not) => match not.method.as_str() {
-                DidOpenTextDocument::METHOD => {
-                    let params =
-                        not.extract::<DidOpenTextDocumentParams>(DidOpenTextDocument::METHOD)?;
-                    eprintln!("Handling DidOpenTextDocument: {}", params.text_document.uri);
-                    match on_open(params.text_document.uri, &mut parser) {
-                        Ok(resp) => connection.sender.send(Message::Notification(resp)),
-                        Err(err) => connection.sender.send(Message::Notification(
-                            lsp_server::Notification {
-                                method: lsp_types::notification::ShowMessage::METHOD.into(),
-                                params: serde_json::to_value(lsp_types::ShowMessageParams {
-                                    typ: lsp_types::MessageType::ERROR,
-                                    message: err.to_string(),
-                                })?,
-                            },
-                        )),
-                    }?;
+            Message::Notification(not) => {
+                let resp = match not.method.as_str() {
+                    DidOpenTextDocument::METHOD => {
+                        notify::<DidOpenTextDocument>(&mut parser, not, notify_did_open)?
+                    }
+                    DidSaveTextDocument::METHOD => {
+                        notify::<DidSaveTextDocument>(&mut parser, not, notify_did_save)?
+                    }
+                    _ => None,
+                };
+                if let Some(resp) = resp {
+                    connection.sender.send(resp)?;
                 }
-                DidSaveTextDocument::METHOD => {
-                    let params =
-                        not.extract::<DidSaveTextDocumentParams>(DidSaveTextDocument::METHOD)?;
-                    eprintln!("Handling DidSaveTextDocument: {}", params.text_document.uri);
-                    let resp = on_save(params.text_document.uri, &mut parser)?;
-                    connection.sender.send(Message::Notification(resp))?;
-                }
-                _ => {}
-            },
+            }
         }
     }
     Ok(())
-}
-
-fn on_open(uri: Url, parser: &mut Parser) -> Result<lsp_server::Notification> {
-    let diags = match parser.parse(uri.clone())? {
-        ParseResult::Syms(_) => Vec::<Diagnostic>::new(),
-        ParseResult::Diags(diags) => diags,
-    };
-
-    let params = lsp_types::PublishDiagnosticsParams {
-        uri,
-        diagnostics: diags,
-        version: None,
-    };
-
-    Ok(lsp_server::Notification {
-        method: PublishDiagnostics::METHOD.into(),
-        params: serde_json::to_value(&params)?,
-    })
-}
-
-fn on_save(uri: Url, parser: &mut Parser) -> Result<lsp_server::Notification> {
-    let diags = match parser.reparse(uri.clone())? {
-        ParseResult::Syms(_) => Vec::<Diagnostic>::new(),
-        ParseResult::Diags(diags) => diags,
-    };
-
-    let params = lsp_types::PublishDiagnosticsParams {
-        uri,
-        diagnostics: diags,
-        version: None,
-    };
-
-    Ok(lsp_server::Notification {
-        method: PublishDiagnostics::METHOD.into(),
-        params: serde_json::to_value(&params)?,
-    })
 }
