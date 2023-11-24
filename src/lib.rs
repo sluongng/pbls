@@ -1,5 +1,4 @@
 mod parser;
-use lsp_types::DocumentDiagnosticParams;
 use parser::ParseResult;
 use parser::Parser;
 
@@ -101,17 +100,20 @@ fn handle_document_diagnostics(
     parser: &mut parser::Parser,
     params: lsp_types::DocumentDiagnosticParams,
 ) -> Result<lsp_types::DocumentDiagnosticReportResult> {
-    Ok(match parser.parse(params.text_document.uri)? {
-        ParseResult::Syms(_) => lsp_types::DocumentDiagnosticReportResult::Report(
-            lsp_types::DocumentDiagnosticReport::Full(
-                lsp_types::RelatedFullDocumentDiagnosticReport {
-                    related_documents: todo!(),
-                    full_document_diagnostic_report: todo!(),
-                },
-            ),
-        ),
-        ParseResult::Diags(_) => Err("File cannot be parsed".into()),
-    })
+    let diags = match parser.parse(params.text_document.uri.clone())? {
+        ParseResult::Syms(_) => vec![],
+        ParseResult::Diags(diags) => diags,
+    };
+
+    Ok(lsp_types::DocumentDiagnosticReportResult::Report(
+        lsp_types::DocumentDiagnosticReport::Full(lsp_types::RelatedFullDocumentDiagnosticReport {
+            related_documents: None,
+            full_document_diagnostic_report: lsp_types::FullDocumentDiagnosticReport {
+                result_id: None,
+                items: diags,
+            },
+        }),
+    ))
 }
 
 fn handle_goto_definition(

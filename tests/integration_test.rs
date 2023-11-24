@@ -1,14 +1,17 @@
 use core::panic;
 use lsp_server::{Connection, Message};
 use lsp_types::notification::{DidOpenTextDocument, DidSaveTextDocument, PublishDiagnostics};
-use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Shutdown, WorkspaceSymbolRequest};
+use lsp_types::request::{
+    DocumentDiagnosticRequest, DocumentSymbolRequest, GotoDefinition, Shutdown,
+    WorkspaceSymbolRequest,
+};
 use lsp_types::{notification::Initialized, request::Initialize, InitializedParams};
 use lsp_types::{
     Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    InitializeParams, Location, Position, PublishDiagnosticsParams, Range, SymbolInformation,
-    SymbolKind, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
-    WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    DocumentDiagnosticParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
+    GotoDefinitionResponse, InitializeParams, Location, Position, PublishDiagnosticsParams, Range,
+    SymbolInformation, SymbolKind, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, Url, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use pbls::Result;
 use pretty_assertions::assert_eq;
@@ -24,6 +27,20 @@ fn other_uri() -> Url {
 
 fn dep_uri() -> Url {
     Url::from_file_path(std::fs::canonicalize("./testdata/dep.proto").unwrap()).unwrap()
+}
+
+fn error_uri() -> Url {
+    Url::from_file_path(std::fs::canonicalize("./testdata/error.proto").unwrap()).unwrap()
+}
+
+fn diag(uri: Url, target: &str, message: &str) -> Diagnostic {
+    Diagnostic {
+        range: locate(uri, target).range,
+        message: message.into(),
+        severity: Some(DiagnosticSeverity::ERROR),
+        source: Some("pbls".into()),
+        ..Default::default()
+    }
 }
 
 fn sym(uri: Url, pkg: &str, name: &str, text: &str) -> SymbolInformation {
@@ -287,7 +304,38 @@ fn test_open() -> pbls::Result<()> {
 }
 
 #[test]
-fn test_save() -> pbls::Result<()> {
+fn test_diagnostics_on_open() -> pbls::Result<()> {
+    let client = TestClient::new()?;
+
+    let uri = Url::from_file_path(std::fs::canonicalize("testdata/error.proto")?).unwrap();
+
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: uri.clone(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    let diags = client.recv::<PublishDiagnostics>()?;
+    assert_eq!(diags.uri, uri);
+    assert_elements_equal(
+        diags.diagnostics,
+        vec![
+            diag(uri.clone(), "Thingy t =", "\"Thingy\" is not defined."),
+            diag(
+                uri,
+                "int32 foo =",
+                "Field number 1 has already been used in \"main.Bar\" by field \"f\"",
+            ),
+        ],
+        |s| s.message.clone(),
+    );
+    Ok(())
+}
+
+#[test]
+fn test_diagnostics_on_save() -> pbls::Result<()> {
     let tmp = TempDir::new();
     let path = tmp.join("example.proto");
     let uri = Url::from_file_path(&path).unwrap();
@@ -339,17 +387,11 @@ message Foo{Flob flob = 1;}
         diags,
         PublishDiagnosticsParams {
             uri: uri.clone(),
-            diagnostics: vec![Diagnostic {
-                range: locate(uri, "message Foo{Flob flob = 1;}").range,
-                severity: Some(DiagnosticSeverity::ERROR),
-                code: None,
-                code_description: None,
-                source: Some("pbls".into()),
-                message: "\"Flob\" is not defined".into(),
-                related_information: None,
-                tags: None,
-                data: None,
-            },],
+            diagnostics: vec![diag(
+                uri,
+                "message Foo{Flob flob = 1;}",
+                "\"Flob\" is not defined",
+            )],
             version: None,
         }
     );
@@ -358,48 +400,7 @@ message Foo{Flob flob = 1;}
 }
 
 #[test]
-fn test_diagnostics() -> pbls::Result<()> {
-    let client = TestClient::new()?;
-
-    let uri = Url::from_file_path(std::fs::canonicalize("testdata/error.proto")?).unwrap();
-
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: uri.clone(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    let diags = client.recv::<PublishDiagnostics>()?;
-    assert_eq!(diags.uri, uri);
-    let base_diag = Diagnostic {
-        severity: Some(DiagnosticSeverity::ERROR),
-        source: Some("pbls".into()),
-        ..Default::default()
-    };
-    assert_elements_equal(
-        diags.diagnostics,
-        vec![
-            Diagnostic {
-                range: locate(uri.clone(), "Thingy t =").range,
-                message: "\"Thingy\" is not defined.".into(),
-                ..base_diag.clone()
-            },
-            Diagnostic {
-                range: locate(uri, "int32 foo =").range,
-                message: "Field number 1 has already been used in \"main.Bar\" by field \"f\""
-                    .into(),
-                ..base_diag.clone()
-            },
-        ],
-        |s| s.message.clone(),
-    );
-    Ok(())
-}
-
-#[test]
-fn test_no_diagnostics() -> pbls::Result<()> {
+fn test_no_diagnostics_on_open() -> pbls::Result<()> {
     let client = TestClient::new()?;
 
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
@@ -423,6 +424,45 @@ fn test_no_diagnostics() -> pbls::Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_document_diagnostics() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+
+    let uri = error_uri();
+
+    let resp = client.request::<DocumentDiagnosticRequest>(DocumentDiagnosticParams {
+        text_document: TextDocumentIdentifier { uri: uri.clone() },
+        identifier: None,
+        previous_result_id: None,
+        work_done_progress_params: lsp_types::WorkDoneProgressParams {
+            work_done_token: None,
+        },
+        partial_result_params: lsp_types::PartialResultParams {
+            partial_result_token: None,
+        },
+    })?;
+
+    let lsp_types::DocumentDiagnosticReportResult::Report(
+        lsp_types::DocumentDiagnosticReport::Full(resp),
+    ) = resp
+    else {
+        panic!("Unexpected response {resp:?}")
+    };
+
+    assert_elements_equal(
+        resp.full_document_diagnostic_report.items,
+        vec![
+            diag(uri.clone(), "Thingy t =", "\"Thingy\" is not defined."),
+            diag(
+                uri,
+                "int32 foo =",
+                "Field number 1 has already been used in \"main.Bar\" by field \"f\"",
+            ),
+        ],
+        |s| s.message.clone(),
+    );
+    Ok(())
+}
 #[test]
 fn test_document_symbols() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
