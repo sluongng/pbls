@@ -152,7 +152,11 @@ struct TempDir(std::path::PathBuf);
 
 impl TempDir {
     fn new() -> TempDir {
-        let path = std::env::temp_dir().join("pbls-test");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("pbls-test-{now}"));
         std::fs::create_dir_all(&path).unwrap();
         TempDir(path)
     }
@@ -702,5 +706,102 @@ fn test_goto_definition_different_file_nested() -> pbls::Result<()> {
         )))
     );
 
+    Ok(())
+}
+
+#[test]
+fn test_import_discovery() -> pbls::Result<()> {
+    // Test the following structure
+    // tmp
+    // ├── root.proto
+    // ├── sibling.proto
+    // ├── a
+    // │   ├── a.txt
+    // │   ├── a.proto
+    // │   └── f
+    // │       └── af.proto
+    // ├── b
+    // │   ├── c
+    // │   │   ├── bc.proto
+    // │   │   └── bc.txt
+    // │   └── d
+    // │       └── bd.txt
+    // ├── e
+    // │
+    // └── loop
+    //     └── loop -> ../loop
+
+    let tmp = TempDir::new();
+
+    std::fs::create_dir_all(tmp.join("a/f"))?;
+    std::fs::create_dir_all(tmp.join("b/c"))?;
+    std::fs::create_dir_all(tmp.join("b/d"))?;
+    std::fs::create_dir_all(tmp.join("e"))?;
+    std::fs::create_dir_all(tmp.join("loop"))?;
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(tmp.join("loop"), tmp.join("loop/loop"))?;
+
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(tmp.join("loop"), tmp.join("loop/loop"))?;
+
+    std::fs::write(
+        &tmp.join("root.proto"),
+        r#"
+        syntax = "proto3"; 
+
+        import "sibling.proto"; 
+        import "a.proto"; 
+        import "af.proto"; 
+        import "bc.proto"; 
+
+        message Root{
+            Sibling s = 1;
+            A a = 2;
+            AF af = 3;
+            BC bc = 4;
+        }"#,
+    )?;
+
+    std::fs::write(
+        &tmp.join("sibling.proto"),
+        "syntax = \"proto3\"; message Sibling{}",
+    )?;
+
+    std::fs::write(&tmp.join("a/a.txt"), "not a proto")?;
+    std::fs::write(&tmp.join("a/a.proto"), "syntax = \"proto3\"; message A{}")?;
+    std::fs::write(
+        &tmp.join("a/f/af.proto"),
+        "syntax = \"proto3\"; message AF{}",
+    )?;
+
+    std::fs::write(&tmp.join("b/c/bc.txt"), "not a proto")?;
+    std::fs::write(
+        &tmp.join("b/c/bc.proto"),
+        "syntax = \"proto3\"; message BC{}",
+    )?;
+
+    std::fs::write(&tmp.join("b/d/bd.txt"), "not a proto")?;
+
+    let root_uri = Url::from_file_path(&tmp.join("root.proto")).unwrap();
+    let client = TestClient::new_with_root(&tmp)?;
+
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: root_uri.clone(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    let diags = client.recv::<PublishDiagnostics>()?;
+    assert_eq!(
+        diags,
+        PublishDiagnosticsParams {
+            uri: root_uri,
+            diagnostics: vec![],
+            version: None,
+        }
+    );
     Ok(())
 }
