@@ -1,6 +1,12 @@
 mod parser;
+use lsp_types::request::Completion;
 use lsp_types::request::DocumentDiagnosticRequest;
 use lsp_types::request::WorkspaceDiagnosticRequest;
+use lsp_types::CompletionItem;
+use lsp_types::CompletionItemKind;
+use lsp_types::CompletionParams;
+use lsp_types::CompletionResponse;
+use lsp_types::SymbolKind;
 use lsp_types::WorkspaceDocumentDiagnosticReport;
 use parser::ParseResult;
 use parser::Parser;
@@ -206,6 +212,28 @@ fn handle_goto_definition(
     Ok(Some(GotoDefinitionResponse::Scalar(sym.location.clone())))
 }
 
+fn handle_completion(
+    parser: &mut Parser,
+    params: CompletionParams,
+) -> Result<Option<CompletionResponse>> {
+    let syms = match parser.parse(params.text_document_position.text_document.uri)? {
+        ParseResult::Syms(syms) => syms,
+        ParseResult::Diags(_) => vec![],
+    };
+    let items = syms.iter().map(|s| CompletionItem {
+        label: s.name.clone(),
+        label_details: None,
+        kind: Some(match s.kind {
+            SymbolKind::ENUM => CompletionItemKind::ENUM,
+            _ => CompletionItemKind::STRUCT,
+        }),
+        detail: None,
+        documentation: None,
+        ..Default::default()
+    });
+    Ok(Some(CompletionResponse::Array(items.collect())))
+}
+
 fn notify_did_open(
     parser: &mut Parser,
     params: DidOpenTextDocumentParams,
@@ -305,7 +333,7 @@ pub fn run(connection: Connection) -> Result<()> {
             },
         )),
         definition_provider: Some(OneOf::Left(true)),
-        // completion_provider: Some(lsp_types::CompletionOptions::default()),
+        completion_provider: Some(lsp_types::CompletionOptions::default()),
         diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
             lsp_types::DiagnosticOptions {
                 identifier: Some(String::from("pbls")),
@@ -376,6 +404,9 @@ pub fn run(connection: Connection) -> Result<()> {
                         req,
                         handle_goto_definition,
                     )),
+                    Completion::METHOD => {
+                        Some(handle::<Completion>(&mut parser, req, handle_completion))
+                    }
                     _ => None,
                 };
                 if let Some(resp) = resp {
