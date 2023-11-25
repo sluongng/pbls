@@ -24,7 +24,7 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 #[derive(Debug, serde::Deserialize)]
 struct Config {
-    proto_paths: Vec<String>,
+    proto_paths: Vec<std::path::PathBuf>,
 }
 
 // Handle a request, returning the response to send.
@@ -250,6 +250,50 @@ fn notify_did_save(
     }))
 }
 
+fn has_proto_files(path: impl AsRef<std::path::Path>) -> Result<bool> {
+    Ok(std::fs::read_dir(path)?
+        .find(|x| match x {
+            Ok(entry) => entry
+                .path()
+                .extension()
+                .map_or(false, |e| e.to_str() == Some("proto")),
+            Err(_) => false,
+        })
+        .is_some())
+}
+
+fn find_dirs(root: std::path::PathBuf) -> Result<Vec<std::path::PathBuf>> {
+    let mut res = vec![];
+    for entry in std::fs::read_dir(&root)? {
+        if let Ok(entry) = entry {
+            if entry.metadata().is_ok_and(|m| m.is_dir()) {
+                let mut dirs = find_dirs(entry.path())?;
+                res.append(&mut dirs);
+            }
+        }
+    }
+    res.push(root);
+    Ok(res)
+}
+
+fn find_import_paths(root: std::path::PathBuf) -> Result<Vec<std::path::PathBuf>> {
+    let dirs = find_dirs(root)?;
+    Ok(dirs
+        .iter()
+        .filter(|&x| has_proto_files(x).unwrap_or(false))
+        .map(|x| x.to_owned())
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_find_import_paths() {
+        let root = std::fs::canonicalize("testdata").unwrap();
+        assert_eq!(super::find_import_paths(root.clone()).unwrap(), vec![root]);
+    }
+}
+
 pub fn run(connection: Connection) -> Result<()> {
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -279,16 +323,17 @@ pub fn run(connection: Connection) -> Result<()> {
     let params: InitializeParams = serde_json::from_value(init_params).unwrap();
     let root = params
         .root_uri
-        .map(|u| u.path().to_string())
-        .unwrap_or(".".into());
-    let path = std::path::Path::new(&root).join(".pbls.toml");
+        .map(|u| u.to_file_path().unwrap())
+        .unwrap_or(std::env::current_dir().unwrap());
+
+    let path = root.join(".pbls.toml");
     let conf = if path.is_file() {
         eprintln!("Reading config from {path:?}");
         toml::from_str(fs::read_to_string(path)?.as_str())?
     } else {
         eprintln!("Using default config");
         Config {
-            proto_paths: vec![root],
+            proto_paths: find_import_paths(root)?,
         }
     };
     eprintln!("Using config {:?}", conf);

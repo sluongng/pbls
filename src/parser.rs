@@ -20,12 +20,12 @@ pub enum ParseResult {
 }
 
 pub struct Parser {
-    proto_paths: Vec<String>,
+    proto_paths: Vec<std::path::PathBuf>,
     files: HashMap<Url, ParseResult>,
 }
 
 impl Parser {
-    pub fn new(proto_paths: Vec<String>) -> Parser {
+    pub fn new(proto_paths: Vec<std::path::PathBuf>) -> Parser {
         Parser {
             proto_paths,
             files: HashMap::new(),
