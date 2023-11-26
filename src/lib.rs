@@ -1,4 +1,5 @@
 mod parser;
+mod syntax;
 use lsp_types::request::Completion;
 use lsp_types::request::DocumentDiagnosticRequest;
 use lsp_types::request::WorkspaceDiagnosticRequest;
