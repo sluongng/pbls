@@ -17,33 +17,44 @@ fn find_parent<'a>(
     }
 }
 
-fn enclosing_type<'a>(pos: tree_sitter::Point, source: &'a [u8]) -> Option<&'a str> {
+#[derive(Debug, PartialEq)]
+pub enum CompletionContext {
+    Message(String),
+    Enum(String),
+    Import,
+}
+
+pub fn completion_context(row: usize, col: usize, source: &[u8]) -> Option<CompletionContext> {
+    let pos = tree_sitter::Point {
+        row: row.try_into().unwrap(),
+        column: col.try_into().unwrap(),
+    };
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(tree_sitter_proto::language())
         .expect("Error loading proto language");
+
     let tree = parser.parse(source, None)?;
+    let node = tree
+        .root_node()
+        .named_descendant_for_point_range(pos, pos)?;
 
-    let node = tree.root_node().named_descendant_for_point_range(pos, pos);
-    let parent = match node {
-        Some(n) if n.kind() == "type" || n.kind() == "message_body" => {
-            find_parent(Some(n), "message")
-        }
-        Some(n)
-            if n.kind() == "identifier" && n.parent().map(|p| p.kind()) == Some("enum_field") =>
-        {
-            find_parent(Some(n), "enum")
-        }
-        Some(n) if n.kind() == "enum_body" => find_parent(Some(n), "enum"),
+    match node.kind() {
+        "source_file" => Some(CompletionContext::Import),
+        "type" | "message_body" => find_parent(Some(node), "message")
+            .and_then(|n| node_name(source, n))
+            .map(|name| CompletionContext::Message(name.into())),
+        "enum_body" => find_parent(Some(node), "enum")
+            .and_then(|n| node_name(source, n))
+            .map(|name| CompletionContext::Enum(name.into())),
         _ => None,
-    };
-
-    parent.and_then(|c| node_name(source, c))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     // Takes a string with '|' characters representing cursors.
     // Returns the string with '|' removed, and the positions of the cursors.
     fn cursors(text: &str) -> (String, Vec<tree_sitter::Point>) {
@@ -65,26 +76,28 @@ mod tests {
         (res, cursors)
     }
 
-    // #[test]
-    // fn test_cursors() {
-    //     assert_eq!(
-    //         cursors(
-    //             vec!["|foo|bar|", "bizbuz|baz", "bluh|",]
-    //                 .join("\n")
-    //                 .as_str()
-    //         ),
-    //         (
-    //             "foobar\nbizbuzbaz\nbluh".into(),
-    //             vec![
-    //                 tree_sitter::Point { row: 0, column: 0 },
-    //                 tree_sitter::Point { row: 0, column: 3 },
-    //                 tree_sitter::Point { row: 0, column: 6 },
-    //                 tree_sitter::Point { row: 1, column: 6 },
-    //                 tree_sitter::Point { row: 2, column: 4 }
-    //             ]
-    //         )
-    //     );
-    // }
+    fn scope<'a>(text: &str) {
+        let (source, points) = cursors(text);
+        let pos = points.first().unwrap();
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(tree_sitter_proto::language())
+            .expect("Error loading proto language");
+        let tree = parser.parse(source.clone(), None).unwrap();
+
+        let mut node = tree
+            .root_node()
+            .named_descendant_for_point_range(*pos, *pos);
+        // let mut cursor = node.walk();
+        let prev = node.unwrap().prev_named_sibling();
+        let mut res = vec![];
+        while let Some(n) = node {
+            res.push(n.kind());
+            node = n.parent();
+        }
+        res.reverse();
+        println!("{}: {:?} <- {prev:?}", text, res);
+    }
 
     #[test]
     fn test_enclosing_type() {
@@ -119,19 +132,55 @@ mod tests {
         assert_eq!(
             points
                 .iter()
-                .map(|p| enclosing_type(*p, source.as_bytes()))
-                .collect::<Vec<Option<&str>>>(),
+                .map(|p| completion_context(p.row, p.column, source.as_bytes()))
+                .collect::<Vec<Option<CompletionContext>>>(),
             vec![
                 None,
                 None,
                 None,
-                Some("Foo"),
-                Some("Buz"),
-                Some("Bar"),
+                Some(CompletionContext::Import),
+                Some(CompletionContext::Message("Foo".into())),
+                Some(CompletionContext::Message("Buz".into())),
+                Some(CompletionContext::Message("Bar".into())),
                 None,
-                Some("Enum"),
-                Some("Enum"),
+                Some(CompletionContext::Message("Enum".into())),
+                Some(CompletionContext::Message("Enum".into())),
             ]
         );
+    }
+
+    #[test]
+    fn test_scope() {
+        scope("syntax = \"proto3\"; message Foo{ | }");
+        scope("syntax = \"proto3\"; message Foo{ int| }");
+        scope("syntax = \"proto3\"; message Foo{ Bar| }");
+        scope("syntax = \"proto3\"; message Foo{ Ba|r }");
+        scope("syntax = \"proto3\"; message Foo{ Bar | }");
+        scope("syntax = \"proto3\"; message Foo{ Ba|r }");
+        scope("syntax = \"proto3\"; message Foo{ Bar b| }");
+        scope("syntax = \"proto3\"; message Foo{ Bar |b }");
+        scope("syntax = \"proto3\"; message Foo{ Bar b | }");
+        scope("syntax = \"proto3\"; message Foo{ Bar b =| }");
+        scope("syntax = \"proto3\"; message Foo{ Bar b = | }");
+        scope("syntax = \"proto3\"; message Foo{ Bar b = |1 }");
+        scope("syntax = \"proto3\"; message Foo{ Bar b = 1| }");
+        scope("syntax = \"proto3\"; message Foo{ Bar b = 1;| }");
+        scope("syntax = \"proto3\"; message Foo{ Bar b = |1; }");
+        scope("syntax = \"proto3\"; message Foo{ Bar |b = 1; }");
+        scope("syntax = \"proto3\"; message Foo{ Bar b| = 1; }");
+        scope("syntax = \"proto3\"; message Foo{ Bar| b = 1; }");
+        scope("syntax = \"proto3\"; message Foo{ Ba|r b = 1; }");
+        scope("syntax = \"proto3\"; enum Foo{ | }");
+        scope("syntax = \"proto3\"; enum Foo{ FOO| }");
+        scope("syntax = \"proto3\"; enum Foo{ FOO_ONE = 1|; }");
+        scope("syntax = \"proto3\"; |");
+        scope("syntax = \"proto3\"; import |");
+        scope("syntax = \"proto3\"; impo|rt ");
+        scope("syntax = \"proto3\"; import \"|");
+        scope("syntax = \"proto3\"; import \"a|");
+        scope("syntax = \"proto3\"; import \"|a");
+        scope("syntax = \"proto3\"; import |\"");
+        scope("syntax = \"proto3\"; import \"t|h");
+        scope("syntax = \"proto3\"; import \"th|ing\"");
     }
 }

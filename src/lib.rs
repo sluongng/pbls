@@ -217,6 +217,27 @@ fn handle_completion(
     parser: &mut Parser,
     params: CompletionParams,
 ) -> Result<Option<CompletionResponse>> {
+    let pos = params.text_document_position.position;
+    let source = std::fs::read(
+        params
+            .text_document_position
+            .text_document
+            .uri
+            .to_file_path()
+            .unwrap(),
+    )?;
+    match syntax::completion_context(pos.line.try_into()?, pos.character.try_into()?, &source) {
+        Some(syntax::CompletionContext::Message(_)) => complete_types(parser, params),
+        Some(syntax::CompletionContext::Enum(_)) => todo!(),
+        Some(syntax::CompletionContext::Import) => todo!(),
+        None => todo!(),
+    }
+}
+
+fn complete_types(
+    parser: &mut Parser,
+    params: CompletionParams,
+) -> Result<Option<CompletionResponse>> {
     let syms = match parser.parse(params.text_document_position.text_document.uri)? {
         ParseResult::Syms(syms) => syms,
         ParseResult::Diags(_) => vec![],
