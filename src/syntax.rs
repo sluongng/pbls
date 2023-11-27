@@ -41,6 +41,9 @@ pub fn completion_context(row: usize, col: usize, source: &[u8]) -> Option<Compl
 
     match node.kind() {
         "source_file" => Some(CompletionContext::Import),
+        "string" if node.parent().is_some_and(|p| p.kind() == "import") => {
+            Some(CompletionContext::Import)
+        }
         "type" | "message_body" => find_parent(Some(node), "message")
             .and_then(|n| node_name(source, n))
             .map(|name| CompletionContext::Message(name.into())),
@@ -136,15 +139,14 @@ mod tests {
                 .collect::<Vec<Option<CompletionContext>>>(),
             vec![
                 None,
-                None,
-                None,
                 Some(CompletionContext::Import),
+                None,
                 Some(CompletionContext::Message("Foo".into())),
                 Some(CompletionContext::Message("Buz".into())),
                 Some(CompletionContext::Message("Bar".into())),
                 None,
-                Some(CompletionContext::Message("Enum".into())),
-                Some(CompletionContext::Message("Enum".into())),
+                Some(CompletionContext::Enum("Enum".into())),
+                Some(CompletionContext::Enum("Enum".into())),
             ]
         );
     }
