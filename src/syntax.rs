@@ -1,3 +1,5 @@
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
 fn node_name<'a>(source: &'a [u8], node: tree_sitter::Node) -> Option<&'a str> {
     let mut cursor = node.walk();
     let name = node
@@ -24,33 +26,48 @@ pub enum CompletionContext {
     Import,
 }
 
-pub fn completion_context(row: usize, col: usize, source: &[u8]) -> Option<CompletionContext> {
-    let pos = tree_sitter::Point {
-        row: row.try_into().unwrap(),
-        column: col.try_into().unwrap(),
-    };
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(tree_sitter_proto::language())
-        .expect("Error loading proto language");
+pub struct Tree {
+    tree: tree_sitter::Tree,
+    source: Vec<u8>,
+}
 
-    let tree = parser.parse(source, None)?;
-    let node = tree
-        .root_node()
-        .named_descendant_for_point_range(pos, pos)?;
+impl Tree {
+    pub fn new(source: &[u8]) -> Result<Tree> {
+        // TODO: cache parser/language?
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(tree_sitter_proto::language())
+            .expect("Error loading proto language");
 
-    match node.kind() {
-        "source_file" => Some(CompletionContext::Import),
-        "string" if node.parent().is_some_and(|p| p.kind() == "import") => {
-            Some(CompletionContext::Import)
+        Ok(Tree {
+            tree: parser.parse(source, None).ok_or("Parse failed")?,
+            source: source.into(),
+        })
+    }
+
+    pub fn completion_context(self: Self, row: usize, col: usize) -> Option<CompletionContext> {
+        let pos = tree_sitter::Point {
+            row: row.try_into().unwrap(),
+            column: col.try_into().unwrap(),
+        };
+        let node = self
+            .tree
+            .root_node()
+            .named_descendant_for_point_range(pos, pos)?;
+
+        match node.kind() {
+            "source_file" => Some(CompletionContext::Import),
+            "string" if node.parent().is_some_and(|p| p.kind() == "import") => {
+                Some(CompletionContext::Import)
+            }
+            "type" | "message_body" => find_parent(Some(node), "message")
+                .and_then(|n| node_name(self.source.as_slice(), n))
+                .map(|name| CompletionContext::Message(name.into())),
+            "enum_body" => find_parent(Some(node), "enum")
+                .and_then(|n| node_name(self.source.as_slice(), n))
+                .map(|name| CompletionContext::Enum(name.into())),
+            _ => None,
         }
-        "type" | "message_body" => find_parent(Some(node), "message")
-            .and_then(|n| node_name(source, n))
-            .map(|name| CompletionContext::Message(name.into())),
-        "enum_body" => find_parent(Some(node), "enum")
-            .and_then(|n| node_name(source, n))
-            .map(|name| CompletionContext::Enum(name.into())),
-        _ => None,
     }
 }
 
@@ -135,7 +152,9 @@ mod tests {
         assert_eq!(
             points
                 .iter()
-                .map(|p| completion_context(p.row, p.column, source.as_bytes()))
+                .map(|p| Tree::new(source.as_bytes())
+                    .unwrap()
+                    .completion_context(p.row, p.column,))
                 .collect::<Vec<Option<CompletionContext>>>(),
             vec![
                 None,
