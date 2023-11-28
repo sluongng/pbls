@@ -1,16 +1,13 @@
 mod parser;
 mod syntax;
+mod workspace;
 use lsp_types::request::Completion;
-use lsp_types::request::DocumentDiagnosticRequest;
-use lsp_types::request::WorkspaceDiagnosticRequest;
 use lsp_types::CompletionItem;
 use lsp_types::CompletionItemKind;
 use lsp_types::CompletionParams;
 use lsp_types::CompletionResponse;
 use lsp_types::SymbolKind;
-use lsp_types::WorkspaceDocumentDiagnosticReport;
 use parser::ParseResult;
-use parser::Parser;
 
 use lsp_server::{Connection, Message};
 use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Request, WorkspaceSymbolRequest};
@@ -36,15 +33,15 @@ struct Config {
 
 // Handle a request, returning the response to send.
 fn handle<Req>(
-    parser: &mut parser::Parser,
+    workspace: &mut workspace::Workspace,
     req: lsp_server::Request,
-    handler: impl Fn(&mut parser::Parser, Req::Params) -> Result<Req::Result>,
+    handler: impl Fn(&mut workspace::Workspace, Req::Params) -> Result<Req::Result>,
 ) -> Result<lsp_server::Message>
 where
     Req: lsp_types::request::Request,
 {
     let (id, params) = req.extract::<Req::Params>(Req::METHOD)?;
-    Ok(Message::Response(match handler(parser, params) {
+    Ok(Message::Response(match handler(workspace, params) {
         Ok(resp) => lsp_server::Response {
             id,
             result: Some(serde_json::to_value(resp)?),
@@ -64,15 +61,15 @@ where
 
 // Handle a notification, optionally returning a notification to send in response.
 fn notify<N>(
-    parser: &mut parser::Parser,
+    workspace: &mut workspace::Workspace,
     not: lsp_server::Notification,
-    handler: impl Fn(&mut parser::Parser, N::Params) -> Result<Option<lsp_server::Notification>>,
+    handler: impl Fn(&mut workspace::Workspace, N::Params) -> Result<Option<lsp_server::Notification>>,
 ) -> Result<Option<lsp_server::Message>>
 where
     N: lsp_types::notification::Notification,
 {
     let params = not.extract::<N::Params>(N::METHOD)?;
-    Ok(match handler(parser, params) {
+    Ok(match handler(workspace, params) {
         Ok(Some(resp)) => Some(Message::Notification(resp)),
         Ok(None) => None,
         // If we get an error, we can't respond directly as with a Request.
@@ -88,85 +85,25 @@ where
 }
 
 fn handle_document_symbols(
-    parser: &mut parser::Parser,
+    workspace: &mut workspace::Workspace,
     params: DocumentSymbolParams,
 ) -> Result<Option<DocumentSymbolResponse>> {
-    match parser.parse(params.text_document.uri)? {
-        ParseResult::Syms(syms) => Ok(Some(DocumentSymbolResponse::Flat(syms))),
-        ParseResult::Diags(_) => Err("File cannot be parsed".into()),
-    }
-}
-
-fn handle_workspace_symbols(
-    parser: &mut parser::Parser,
-    _: WorkspaceSymbolParams,
-) -> Result<Option<lsp_types::WorkspaceSymbolResponse>> {
-    Ok(Some(lsp_types::WorkspaceSymbolResponse::Flat(
-        parser
-            .parse_all()
-            .iter()
-            .flatten()
-            .filter_map(|r| match r {
-                (_, ParseResult::Syms(syms)) => Some(syms.to_owned()),
-                (_, ParseResult::Diags(_)) => None,
-            })
-            .flatten()
-            .collect(),
+    Ok(Some(DocumentSymbolResponse::Flat(
+        workspace.symbols(params.text_document.uri)?,
     )))
 }
 
-fn handle_document_diagnostics(
-    parser: &mut parser::Parser,
-    params: lsp_types::DocumentDiagnosticParams,
-) -> Result<lsp_types::DocumentDiagnosticReportResult> {
-    let diags = match parser.parse(params.text_document.uri.clone())? {
-        ParseResult::Syms(_) => vec![],
-        ParseResult::Diags(diags) => diags,
-    };
-
-    Ok(lsp_types::DocumentDiagnosticReportResult::Report(
-        lsp_types::DocumentDiagnosticReport::Full(lsp_types::RelatedFullDocumentDiagnosticReport {
-            related_documents: None,
-            full_document_diagnostic_report: lsp_types::FullDocumentDiagnosticReport {
-                result_id: None,
-                items: diags,
-            },
-        }),
-    ))
-}
-
-fn handle_workspace_diagnostics(
-    parser: &mut parser::Parser,
-    _: lsp_types::WorkspaceDiagnosticParams,
-) -> Result<lsp_types::WorkspaceDiagnosticReportResult> {
-    let all = parser.parse_all()?;
-    let diags = all
-        .iter()
-        .filter_map(|r| match r {
-            (_, ParseResult::Syms(_)) => None,
-            (url, ParseResult::Diags(d)) => Some((url, d)),
-        })
-        .map(|(url, diags)| {
-            WorkspaceDocumentDiagnosticReport::Full(
-                lsp_types::WorkspaceFullDocumentDiagnosticReport {
-                    uri: url.clone(),
-                    version: None,
-                    full_document_diagnostic_report: lsp_types::FullDocumentDiagnosticReport {
-                        result_id: None,
-                        items: diags.to_owned(),
-                    },
-                },
-            )
-        })
-        .collect();
-
-    Ok(lsp_types::WorkspaceDiagnosticReportResult::Report(
-        lsp_types::WorkspaceDiagnosticReport { items: diags },
-    ))
+fn handle_workspace_symbols(
+    workspace: &mut workspace::Workspace,
+    _: WorkspaceSymbolParams,
+) -> Result<Option<lsp_types::WorkspaceSymbolResponse>> {
+    Ok(Some(lsp_types::WorkspaceSymbolResponse::Flat(
+        workspace.all_symbols()?,
+    )))
 }
 
 fn handle_goto_definition(
-    parser: &mut Parser,
+    workspace: &mut workspace::Workspace,
     params: GotoDefinitionParams,
 ) -> Result<Option<GotoDefinitionResponse>> {
     let uri = params.text_document_position_params.text_document.uri;
@@ -193,14 +130,9 @@ fn handle_goto_definition(
     let name = &line[fore..aft];
     eprintln!("Getting definition for {name}");
 
-    let all = parser.parse_all()?;
+    let all = workspace.all_symbols()?;
     let sym = all
         .iter()
-        .filter_map(|r| match r {
-            (_, ParseResult::Syms(syms)) => Some(syms),
-            (_, ParseResult::Diags(_)) => None,
-        })
-        .flatten()
         .find(|x| {
             name == x.name
                 || match &x.container_name {
@@ -214,20 +146,18 @@ fn handle_goto_definition(
 }
 
 fn handle_completion(
-    parser: &mut Parser,
+    workspace: &mut workspace::Workspace,
     params: CompletionParams,
 ) -> Result<Option<CompletionResponse>> {
-    let pos = params.text_document_position.position;
-    let source = std::fs::read(
-        params
-            .text_document_position
-            .text_document
-            .uri
-            .to_file_path()
-            .unwrap(),
-    )?;
-    match syntax::completion_context(pos.line.try_into()?, pos.character.try_into()?, &source) {
-        Some(syntax::CompletionContext::Message(_)) => complete_types(parser, params),
+    let doc = params.text_document_position.clone();
+    match workspace.completion_context(
+        &doc.text_document.uri,
+        doc.position.line.try_into()?,
+        doc.position.character.try_into()?,
+    )? {
+        Some(syntax::CompletionContext::Message(_)) => {
+            complete_types(workspace, doc.text_document.uri)
+        }
         Some(syntax::CompletionContext::Enum(_)) => todo!(),
         Some(syntax::CompletionContext::Import) => todo!(),
         None => todo!(),
@@ -235,13 +165,10 @@ fn handle_completion(
 }
 
 fn complete_types(
-    parser: &mut Parser,
-    params: CompletionParams,
+    workspace: &mut workspace::Workspace,
+    uri: lsp_types::Url,
 ) -> Result<Option<CompletionResponse>> {
-    let syms = match parser.parse(params.text_document_position.text_document.uri)? {
-        ParseResult::Syms(syms) => syms,
-        ParseResult::Diags(_) => vec![],
-    };
+    let syms = workspace.symbols(uri)?;
     let items = syms.iter().map(|s| CompletionItem {
         label: s.name.clone(),
         label_details: None,
@@ -257,11 +184,11 @@ fn complete_types(
 }
 
 fn notify_did_open(
-    parser: &mut Parser,
+    workspace: &mut workspace::Workspace,
     params: DidOpenTextDocumentParams,
 ) -> Result<Option<lsp_server::Notification>> {
     let uri = params.text_document.uri;
-    let diags = match parser.parse(uri.clone())? {
+    let diags = match workspace.open(uri.clone(), params.text_document.text)? {
         ParseResult::Syms(_) => Vec::<Diagnostic>::new(),
         ParseResult::Diags(diags) => diags,
     };
@@ -279,11 +206,14 @@ fn notify_did_open(
 }
 
 fn notify_did_save(
-    parser: &mut Parser,
+    workspace: &mut workspace::Workspace,
     params: DidSaveTextDocumentParams,
 ) -> Result<Option<lsp_server::Notification>> {
     let uri = params.text_document.uri;
-    let diags = match parser.reparse(uri.clone())? {
+    let diags = match workspace.save(
+        uri.clone(),
+        params.text.ok_or("Save notification missing text")?,
+    )? {
         ParseResult::Syms(_) => Vec::<Diagnostic>::new(),
         ParseResult::Diags(diags) => diags,
     };
@@ -388,7 +318,7 @@ pub fn run(connection: Connection) -> Result<()> {
     };
     eprintln!("Using config {:?}", conf);
 
-    let mut parser = parser::Parser::new(conf.proto_paths);
+    let mut workspace = workspace::Workspace::new(conf.proto_paths);
 
     for msg in &connection.receiver {
         eprintln!("Handling message {msg:?}");
@@ -400,34 +330,22 @@ pub fn run(connection: Connection) -> Result<()> {
                 }
                 let resp = match req.method.as_str() {
                     DocumentSymbolRequest::METHOD => Some(handle::<DocumentSymbolRequest>(
-                        &mut parser,
+                        &mut workspace,
                         req,
                         handle_document_symbols,
                     )),
                     WorkspaceSymbolRequest::METHOD => Some(handle::<WorkspaceSymbolRequest>(
-                        &mut parser,
+                        &mut workspace,
                         req,
                         handle_workspace_symbols,
                     )),
-                    DocumentDiagnosticRequest::METHOD => Some(handle::<DocumentDiagnosticRequest>(
-                        &mut parser,
-                        req,
-                        handle_document_diagnostics,
-                    )),
-                    WorkspaceDiagnosticRequest::METHOD => {
-                        Some(handle::<WorkspaceDiagnosticRequest>(
-                            &mut parser,
-                            req,
-                            handle_workspace_diagnostics,
-                        ))
-                    }
                     GotoDefinition::METHOD => Some(handle::<GotoDefinition>(
-                        &mut parser,
+                        &mut workspace,
                         req,
                         handle_goto_definition,
                     )),
                     Completion::METHOD => {
-                        Some(handle::<Completion>(&mut parser, req, handle_completion))
+                        Some(handle::<Completion>(&mut workspace, req, handle_completion))
                     }
                     _ => None,
                 };
@@ -439,10 +357,10 @@ pub fn run(connection: Connection) -> Result<()> {
             Message::Notification(not) => {
                 let resp = match not.method.as_str() {
                     DidOpenTextDocument::METHOD => {
-                        notify::<DidOpenTextDocument>(&mut parser, not, notify_did_open)?
+                        notify::<DidOpenTextDocument>(&mut workspace, not, notify_did_open)?
                     }
                     DidSaveTextDocument::METHOD => {
-                        notify::<DidSaveTextDocument>(&mut parser, not, notify_did_save)?
+                        notify::<DidSaveTextDocument>(&mut workspace, not, notify_did_save)?
                     }
                     _ => None,
                 };

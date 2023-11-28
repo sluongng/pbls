@@ -45,7 +45,7 @@ impl Tree {
         })
     }
 
-    pub fn completion_context(self: Self, row: usize, col: usize) -> Option<CompletionContext> {
+    pub fn completion_context(self: &Self, row: usize, col: usize) -> Option<CompletionContext> {
         let pos = tree_sitter::Point {
             row: row.try_into().unwrap(),
             column: col.try_into().unwrap(),

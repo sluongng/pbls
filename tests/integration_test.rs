@@ -222,11 +222,15 @@ impl TestClient {
     where
         T: lsp_types::notification::Notification,
     {
-        match self.conn.receiver.recv()? {
+        match self
+            .conn
+            .receiver
+            .recv_timeout(std::time::Duration::from_secs(5))?
+        {
             Message::Request(r) => Err(format!("Expected notification, got: {r:?}"))?,
             Message::Response(r) => Err(format!("Expected notification, got: {r:?}"))?,
             Message::Notification(resp) => {
-                assert_eq!(resp.method, T::METHOD);
+                assert_eq!(resp.method, T::METHOD, "Unexpected response {resp:?}");
                 Ok(serde_json::from_value(resp.params)?)
             }
         }
@@ -246,7 +250,11 @@ impl TestClient {
         self.id += 1;
         self.conn.sender.send(req)?;
         eprintln!("Waiting");
-        match self.conn.receiver.recv()? {
+        match self
+            .conn
+            .receiver
+            .recv_timeout(std::time::Duration::from_secs(5))?
+        {
             Message::Request(r) => Err(format!("Expected response, got: {r:?}"))?,
             Message::Notification(r) => Err(format!("Expected response, got: {r:?}"))?,
             Message::Response(resp) => Ok(serde_json::from_value(
@@ -346,21 +354,19 @@ fn test_diagnostics_on_save() -> pbls::Result<()> {
     let uri = Url::from_file_path(&path).unwrap();
     let client = TestClient::new_with_root(&tmp)?;
 
-    std::fs::write(
-        &path,
-        r#"
+    let text = r#"
 syntax = "proto3";
 package main;
 message Foo{}
-        "#,
-    )?;
+"#;
+    std::fs::write(&path, text)?;
 
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
             uri: uri.clone(),
             language_id: "".into(),
             version: 0,
-            text: "".into(),
+            text: text.into(),
         },
     })?;
     let diags = client.recv::<PublishDiagnostics>()?;
@@ -374,18 +380,16 @@ message Foo{}
     );
 
     // modify the file, check that we pick up the change
-    std::fs::write(
-        &path,
-        r#"
+    let text = r#"
 syntax = "proto3";
 package main;
 message Foo{Flob flob = 1;}
-        "#,
-    )?;
+"#;
+    std::fs::write(&path, text)?;
 
     client.notify::<DidSaveTextDocument>(DidSaveTextDocumentParams {
         text_document: TextDocumentIdentifier { uri: uri.clone() },
-        text: None, // we just re-read the file from disk
+        text: Some(text.into()),
     })?;
     let diags = client.recv::<PublishDiagnostics>()?;
     assert_eq!(
@@ -425,87 +429,6 @@ fn test_no_diagnostics_on_open() -> pbls::Result<()> {
             diagnostics: vec![],
             version: None
         }
-    );
-    Ok(())
-}
-
-#[test]
-fn test_document_diagnostics() -> pbls::Result<()> {
-    let mut client = TestClient::new()?;
-
-    let uri = error_uri();
-
-    let resp = client.request::<DocumentDiagnosticRequest>(DocumentDiagnosticParams {
-        text_document: TextDocumentIdentifier { uri: uri.clone() },
-        identifier: None,
-        previous_result_id: None,
-        work_done_progress_params: lsp_types::WorkDoneProgressParams {
-            work_done_token: None,
-        },
-        partial_result_params: lsp_types::PartialResultParams {
-            partial_result_token: None,
-        },
-    })?;
-
-    let lsp_types::DocumentDiagnosticReportResult::Report(
-        lsp_types::DocumentDiagnosticReport::Full(resp),
-    ) = resp
-    else {
-        panic!("Unexpected response {resp:?}")
-    };
-
-    assert_elements_equal(
-        resp.full_document_diagnostic_report.items,
-        vec![
-            diag(uri.clone(), "Thingy t =", "\"Thingy\" is not defined."),
-            diag(
-                uri,
-                "int32 foo =",
-                "Field number 1 has already been used in \"main.Bar\" by field \"f\"",
-            ),
-        ],
-        |s| s.message.clone(),
-    );
-    Ok(())
-}
-
-#[test]
-fn test_workspace_diagnostics() -> pbls::Result<()> {
-    let mut client = TestClient::new()?;
-
-    let uri = error_uri();
-
-    let resp = client.request::<WorkspaceDiagnosticRequest>(WorkspaceDiagnosticParams {
-        work_done_progress_params: lsp_types::WorkDoneProgressParams {
-            work_done_token: None,
-        },
-        partial_result_params: lsp_types::PartialResultParams {
-            partial_result_token: None,
-        },
-        identifier: None,
-        previous_result_ids: vec![],
-    })?;
-
-    let lsp_types::WorkspaceDiagnosticReportResult::Report(report) = resp else {
-        panic!("Unexpected response {resp:?}")
-    };
-    let report = report.items.first().unwrap();
-    let WorkspaceDocumentDiagnosticReport::Full(report) = report.clone() else {
-        panic!("Unexpected response {report:?}")
-    };
-
-    assert_eq!(uri, report.uri);
-    assert_elements_equal(
-        report.full_document_diagnostic_report.items,
-        vec![
-            diag(uri.clone(), "Thingy t =", "\"Thingy\" is not defined."),
-            diag(
-                uri,
-                "int32 foo =",
-                "Field number 1 has already been used in \"main.Bar\" by field \"f\"",
-            ),
-        ],
-        |s| s.message.clone(),
     );
     Ok(())
 }
