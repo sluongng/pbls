@@ -1,12 +1,15 @@
 mod parser;
 mod syntax;
 mod workspace;
+use lsp_types::notification::DidChangeTextDocument;
 use lsp_types::request::Completion;
 use lsp_types::CompletionItem;
 use lsp_types::CompletionItemKind;
 use lsp_types::CompletionParams;
 use lsp_types::CompletionResponse;
+use lsp_types::DidChangeTextDocumentParams;
 use lsp_types::SymbolKind;
+use lsp_types::TextDocumentSyncKind;
 use parser::ParseResult;
 
 use lsp_server::{Connection, Message};
@@ -158,9 +161,9 @@ fn handle_completion(
         Some(syntax::CompletionContext::Message(_)) => {
             complete_types(workspace, doc.text_document.uri)
         }
-        Some(syntax::CompletionContext::Enum(_)) => todo!(),
-        Some(syntax::CompletionContext::Import) => todo!(),
-        None => todo!(),
+        Some(syntax::CompletionContext::Enum(_)) => Ok(None), // TODO
+        Some(syntax::CompletionContext::Import) => Ok(None),  // TODO
+        None => Ok(None),
     }
 }
 
@@ -230,6 +233,21 @@ fn notify_did_save(
     }))
 }
 
+fn notify_did_change(
+    workspace: &mut workspace::Workspace,
+    params: DidChangeTextDocumentParams,
+) -> Result<Option<lsp_server::Notification>> {
+    let uri = params.text_document.uri;
+    let text = params
+        .content_changes
+        .first()
+        .ok_or("Change notification missing text")?
+        .text
+        .clone();
+    workspace.edit(&uri, text)?;
+
+    Ok(None)
+}
 fn has_proto_files(path: impl AsRef<std::path::Path>) -> Result<bool> {
     Ok(std::fs::read_dir(path)?
         .find(|x| match x {
@@ -281,6 +299,8 @@ pub fn run(connection: Connection) -> Result<()> {
         text_document_sync: Some(TextDocumentSyncCapability::Options(
             TextDocumentSyncOptions {
                 save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+                // TODO: Support partial sync
+                change: Some(TextDocumentSyncKind::FULL),
                 ..Default::default()
             },
         )),
@@ -361,6 +381,9 @@ pub fn run(connection: Connection) -> Result<()> {
                     }
                     DidSaveTextDocument::METHOD => {
                         notify::<DidSaveTextDocument>(&mut workspace, not, notify_did_save)?
+                    }
+                    DidChangeTextDocument::METHOD => {
+                        notify::<DidChangeTextDocument>(&mut workspace, not, notify_did_change)?
                     }
                     _ => None,
                 };

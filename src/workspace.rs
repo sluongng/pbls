@@ -1,7 +1,7 @@
 use crate::syntax;
 
 use super::parser::{ParseResult, Parser};
-use lsp_types::{Diagnostic, SymbolInformation, Url};
+use lsp_types::{SymbolInformation, Url};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -30,10 +30,11 @@ impl Workspace {
         self.parser.reparse(uri)
     }
 
-    pub fn edit(&mut self, uri: Url, text: String) -> Result<ParseResult> {
+    pub fn edit(&mut self, uri: &Url, text: String) -> Result<ParseResult> {
+        eprintln!("Text: {text}");
         self.trees
             .insert(uri.clone(), syntax::Tree::new(text.as_bytes())?);
-        self.parser.reparse(uri)
+        self.parser.reparse(uri.clone())
     }
 
     pub fn symbols(&mut self, uri: Url) -> Result<Vec<SymbolInformation>> {
@@ -55,13 +56,6 @@ impl Workspace {
             })
             .flatten()
             .collect())
-    }
-
-    pub fn diagnostics(&mut self, uri: Url) -> Result<Vec<Diagnostic>> {
-        match self.parser.parse(uri)? {
-            ParseResult::Syms(_) => Ok(vec![]),
-            ParseResult::Diags(diags) => Ok(diags),
-        }
     }
 
     pub fn completion_context(
