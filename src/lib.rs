@@ -152,17 +152,12 @@ fn handle_completion(
     workspace: &mut workspace::Workspace,
     params: CompletionParams,
 ) -> Result<Option<CompletionResponse>> {
-    let doc = params.text_document_position.clone();
-    match workspace.completion_context(
-        &doc.text_document.uri,
-        doc.position.line.try_into()?,
-        doc.position.character.try_into()?,
-    )? {
-        Some(syntax::CompletionContext::Message(_)) => {
-            complete_types(workspace, doc.text_document.uri)
-        }
+    let pos = params.text_document_position.position;
+    let uri = params.text_document_position.text_document.uri;
+    match workspace.completion_context(&uri, pos.line.try_into()?, pos.character.try_into()?)? {
+        Some(syntax::CompletionContext::Message(_)) => complete_types(workspace, uri),
         Some(syntax::CompletionContext::Enum(_)) => Ok(None), // TODO
-        Some(syntax::CompletionContext::Import) => Ok(None),  // TODO
+        Some(syntax::CompletionContext::Import) => complete_imports(workspace, uri), // TODO
         None => Ok(None),
     }
 }
@@ -181,6 +176,21 @@ fn complete_types(
         }),
         detail: None,
         documentation: None,
+        ..Default::default()
+    });
+    Ok(Some(CompletionResponse::Array(items.collect())))
+}
+
+fn complete_imports(
+    workspace: &mut workspace::Workspace,
+    _: lsp_types::Url, // TODO: use this to exclude already-imported files
+) -> Result<Option<CompletionResponse>> {
+    let items = workspace.available_imports().map(|s| CompletionItem {
+        label: s,
+        label_details: None,
+        kind: Some(CompletionItemKind::FILE),
+        detail: None,        // TODO: package name?
+        documentation: None, // TODO: top-level file comment?
         ..Default::default()
     });
     Ok(Some(CompletionResponse::Array(items.collect())))

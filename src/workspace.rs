@@ -6,6 +6,7 @@ use lsp_types::{SymbolInformation, Url};
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub struct Workspace {
+    proto_paths: Vec<std::path::PathBuf>,
     parser: Parser,
     trees: std::collections::HashMap<Url, syntax::Tree>,
 }
@@ -13,6 +14,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(proto_paths: Vec<std::path::PathBuf>) -> Workspace {
         Workspace {
+            proto_paths: proto_paths.clone(),
             parser: Parser::new(proto_paths),
             trees: std::collections::HashMap::new(),
         }
@@ -69,5 +71,18 @@ impl Workspace {
             .get(uri)
             .ok_or("Completion requested on file with no tree for {uri}")?;
         Ok(tree.completion_context(line, character))
+    }
+
+    // Iterate the names of all proto files on the import paths.
+    // TODO: Exclude files already imported.
+    pub fn available_imports<'a>(&'a self) -> impl Iterator<Item = String> + 'a {
+        self.proto_paths
+            .iter()
+            .filter_map(|dir| std::fs::read_dir(dir).ok())
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.metadata().is_ok_and(|m| m.is_file()))
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|fname| fname.ends_with(".proto"))
     }
 }
