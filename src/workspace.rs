@@ -21,21 +21,17 @@ impl Workspace {
     }
 
     pub fn open(&mut self, uri: Url, text: String) -> Result<ParseResult> {
-        self.trees
-            .insert(uri.clone(), syntax::Tree::new(text.as_bytes())?);
+        self.trees.insert(uri.clone(), syntax::Tree::new(text)?);
         self.parser.reparse(uri)
     }
 
     pub fn save(&mut self, uri: Url, text: String) -> Result<ParseResult> {
-        self.trees
-            .insert(uri.clone(), syntax::Tree::new(text.as_bytes())?);
+        self.trees.insert(uri.clone(), syntax::Tree::new(text)?);
         self.parser.reparse(uri)
     }
 
     pub fn edit(&mut self, uri: &Url, text: String) -> Result<ParseResult> {
-        eprintln!("Text: {text}");
-        self.trees
-            .insert(uri.clone(), syntax::Tree::new(text.as_bytes())?);
+        self.trees.insert(uri.clone(), syntax::Tree::new(text)?);
         self.parser.reparse(uri.clone())
     }
 

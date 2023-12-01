@@ -28,11 +28,11 @@ pub enum CompletionContext {
 
 pub struct Tree {
     tree: tree_sitter::Tree,
-    source: Vec<u8>,
+    text: String,
 }
 
 impl Tree {
-    pub fn new(source: &[u8]) -> Result<Tree> {
+    pub fn new(text: String) -> Result<Tree> {
         // TODO: cache parser/language?
         let mut parser = tree_sitter::Parser::new();
         parser
@@ -40,9 +40,19 @@ impl Tree {
             .expect("Error loading proto language");
 
         Ok(Tree {
-            tree: parser.parse(source, None).ok_or("Parse failed")?,
-            source: source.into(),
+            tree: parser.parse(&text, None).ok_or("Parse failed")?,
+            text,
         })
+    }
+
+    pub fn is_import_completion(self: &Self, row: usize, col: usize) -> bool {
+        col > "import ".len()
+            && self
+                .text
+                .lines()
+                .skip(row)
+                .next()
+                .map_or(false, |line| line.starts_with("import "))
     }
 
     pub fn completion_context(self: &Self, row: usize, col: usize) -> Option<CompletionContext> {
@@ -56,15 +66,15 @@ impl Tree {
             .named_descendant_for_point_range(pos, pos)?;
 
         match node.kind() {
-            "source_file" => Some(CompletionContext::Import),
+            "source_file" if self.is_import_completion(row, col) => Some(CompletionContext::Import),
             "string" if node.parent().is_some_and(|p| p.kind() == "import") => {
                 Some(CompletionContext::Import)
             }
             "type" | "message_body" => find_parent(Some(node), "message")
-                .and_then(|n| node_name(self.source.as_slice(), n))
+                .and_then(|n| node_name(self.text.as_bytes(), n))
                 .map(|name| CompletionContext::Message(name.into())),
             "enum_body" => find_parent(Some(node), "enum")
-                .and_then(|n| node_name(self.source.as_slice(), n))
+                .and_then(|n| node_name(self.text.as_bytes(), n))
                 .map(|name| CompletionContext::Enum(name.into())),
             _ => None,
         }
@@ -103,8 +113,9 @@ mod tests {
         parser
             .set_language(tree_sitter_proto::language())
             .expect("Error loading proto language");
-        let tree = parser.parse(source.clone(), None).unwrap();
+        let tree = parser.parse(&source, None).unwrap();
 
+        println!("{}", tree.root_node().to_sexp());
         let mut node = tree
             .root_node()
             .named_descendant_for_point_range(*pos, *pos);
@@ -152,9 +163,9 @@ mod tests {
         assert_eq!(
             points
                 .iter()
-                .map(|p| Tree::new(source.as_bytes())
+                .map(|p| Tree::new(source.clone())
                     .unwrap()
-                    .completion_context(p.row, p.column,))
+                    .completion_context(p.row, p.column))
                 .collect::<Vec<Option<CompletionContext>>>(),
             vec![
                 None,

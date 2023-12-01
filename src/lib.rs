@@ -8,6 +8,7 @@ use lsp_types::CompletionItemKind;
 use lsp_types::CompletionParams;
 use lsp_types::CompletionResponse;
 use lsp_types::DidChangeTextDocumentParams;
+use lsp_types::SaveOptions;
 use lsp_types::SymbolKind;
 use lsp_types::TextDocumentSyncKind;
 use parser::ParseResult;
@@ -308,7 +309,10 @@ pub fn run(connection: Connection) -> Result<()> {
         workspace_symbol_provider: Some(OneOf::Left(true)),
         text_document_sync: Some(TextDocumentSyncCapability::Options(
             TextDocumentSyncOptions {
-                save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+                open_close: Some(true),
+                save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                    include_text: Some(true),
+                })),
                 // TODO: Support partial sync
                 change: Some(TextDocumentSyncKind::FULL),
                 ..Default::default()
