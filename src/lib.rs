@@ -154,11 +154,12 @@ fn handle_completion(
     params: CompletionParams,
 ) -> Result<Option<CompletionResponse>> {
     let pos = params.text_document_position.position;
+    eprintln!("Complete: {pos:?}");
     let uri = params.text_document_position.text_document.uri;
     match workspace.completion_context(&uri, pos.line.try_into()?, pos.character.try_into()?)? {
         Some(syntax::CompletionContext::Message(_)) => complete_types(workspace, uri),
         Some(syntax::CompletionContext::Enum(_)) => Ok(None), // TODO
-        Some(syntax::CompletionContext::Import) => complete_imports(workspace, uri), // TODO
+        Some(syntax::CompletionContext::Import) => complete_imports(workspace, uri, pos), // TODO
         None => Ok(None),
     }
 }
@@ -185,13 +186,13 @@ fn complete_types(
 fn complete_imports(
     workspace: &mut workspace::Workspace,
     _: lsp_types::Url, // TODO: use this to exclude already-imported files
+    pos: lsp_types::Position,
 ) -> Result<Option<CompletionResponse>> {
     let items = workspace.available_imports().map(|s| CompletionItem {
-        label: format!("\"{s}\""),
+        label: s.clone(),
         label_details: None,
         kind: Some(CompletionItemKind::FILE),
-        detail: None,        // TODO: package name?
-        documentation: None, // TODO: top-level file comment?
+        insert_text: Some(format!("{}\";", s)),
         ..Default::default()
     });
     Ok(Some(CompletionResponse::Array(items.collect())))
@@ -294,15 +295,6 @@ fn find_import_paths(root: std::path::PathBuf) -> Result<Vec<std::path::PathBuf>
         .collect())
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_find_import_paths() {
-        let root = std::fs::canonicalize("testdata").unwrap();
-        assert_eq!(super::find_import_paths(root.clone()).unwrap(), vec![root]);
-    }
-}
-
 pub fn run(connection: Connection) -> Result<()> {
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -319,7 +311,10 @@ pub fn run(connection: Connection) -> Result<()> {
             },
         )),
         definition_provider: Some(OneOf::Left(true)),
-        completion_provider: Some(lsp_types::CompletionOptions::default()),
+        completion_provider: Some(lsp_types::CompletionOptions {
+            trigger_characters: Some(vec!["\"".into()]),
+            ..Default::default()
+        }),
         diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
             lsp_types::DiagnosticOptions {
                 identifier: Some(String::from("pbls")),

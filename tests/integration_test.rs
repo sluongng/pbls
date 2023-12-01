@@ -1,12 +1,19 @@
+use core::panic;
 use lsp_server::{Connection, Message};
-use lsp_types::notification::{DidOpenTextDocument, DidSaveTextDocument, PublishDiagnostics};
-use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Shutdown, WorkspaceSymbolRequest};
+use lsp_types::notification::{
+    DidChangeTextDocument, DidOpenTextDocument, DidSaveTextDocument, PublishDiagnostics,
+};
+use lsp_types::request::{
+    Completion, DocumentSymbolRequest, GotoDefinition, Shutdown, WorkspaceSymbolRequest,
+};
 use lsp_types::{notification::Initialized, request::Initialize, InitializedParams};
 use lsp_types::{
-    Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+    CompletionItem, CompletionItemKind, CompletionParams, Diagnostic, DiagnosticSeverity,
+    DidChangeTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
     DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    InitializeParams, Location, Position, PublishDiagnosticsParams, Range, SymbolInformation,
-    SymbolKind, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
+    InitializeParams, Location, PartialResultParams, Position, PublishDiagnosticsParams, Range,
+    SymbolInformation, SymbolKind, TextDocumentContentChangeEvent, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, Url, WorkDoneProgressParams,
     WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use pbls::Result;
@@ -620,6 +627,89 @@ fn test_goto_definition_different_file_nested() -> pbls::Result<()> {
             other_uri(),
             "message Nested",
         )))
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_complete_import() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: base_uri().clone(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    client.recv::<PublishDiagnostics>()?;
+
+    let text = vec!["syntax = \"proto3\";", "import \""].join("\n");
+    let change = TextDocumentContentChangeEvent {
+        text: text.into(),
+        range: None,
+        range_length: None,
+    };
+    client.notify::<DidChangeTextDocument>(DidChangeTextDocumentParams {
+        text_document: lsp_types::VersionedTextDocumentIdentifier {
+            uri: base_uri().clone(),
+            version: 0,
+        },
+        content_changes: vec![change],
+    })?;
+
+    let resp = client.request::<Completion>(CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: base_uri() },
+            position: Position {
+                line: 1,
+                character: "import \"".len().try_into().unwrap(),
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams {
+            work_done_token: None,
+        },
+        partial_result_params: PartialResultParams {
+            partial_result_token: None,
+        },
+        context: None,
+    })?;
+
+    let Some(lsp_types::CompletionResponse::Array(actual)) = resp else {
+        panic!("Unexpected completion response {resp:?}");
+    };
+
+    assert_elements_equal(
+        actual,
+        vec![
+            CompletionItem {
+                label: "other.proto".into(),
+                kind: Some(CompletionItemKind::FILE),
+                insert_text: Some("other.proto\";".into()),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "dep.proto".into(),
+                kind: Some(CompletionItemKind::FILE),
+                insert_text: Some("dep.proto\";".into()),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "error.proto".into(),
+                kind: Some(CompletionItemKind::FILE),
+                insert_text: Some("error.proto\";".into()),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "simple.proto".into(),
+                kind: Some(CompletionItemKind::FILE),
+                insert_text: Some("simple.proto\";".into()),
+                ..Default::default()
+            },
+        ],
+        |s| s.label.clone(),
     );
 
     Ok(())

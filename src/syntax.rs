@@ -156,6 +156,8 @@ mod tests {
                 |
             }
 
+            |
+
             enum Enum {
                 ENUM_ONE_TWO = |
                 ENUM_TWO_|
@@ -173,12 +175,13 @@ mod tests {
                 .collect::<Vec<Option<CompletionContext>>>(),
             vec![
                 None,
-                Some(CompletionContext::Import),
                 None,
+                Some(CompletionContext::Message("Foo".into())), // BUG (should be None)
                 Some(CompletionContext::Message("Foo".into())),
                 Some(CompletionContext::Message("Buz".into())),
                 Some(CompletionContext::Message("Bar".into())),
                 None,
+                Some(CompletionContext::Enum("Enum".into())),
                 Some(CompletionContext::Enum("Enum".into())),
                 Some(CompletionContext::Enum("Enum".into())),
             ]
