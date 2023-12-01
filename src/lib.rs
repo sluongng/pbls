@@ -187,7 +187,7 @@ fn complete_imports(
     _: lsp_types::Url, // TODO: use this to exclude already-imported files
 ) -> Result<Option<CompletionResponse>> {
     let items = workspace.available_imports().map(|s| CompletionItem {
-        label: s,
+        label: format!("\"{s}\""),
         label_details: None,
         kind: Some(CompletionItemKind::FILE),
         detail: None,        // TODO: package name?

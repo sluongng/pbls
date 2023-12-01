@@ -1,17 +1,12 @@
-use core::panic;
 use lsp_server::{Connection, Message};
 use lsp_types::notification::{DidOpenTextDocument, DidSaveTextDocument, PublishDiagnostics};
-use lsp_types::request::{
-    DocumentDiagnosticRequest, DocumentSymbolRequest, GotoDefinition, Shutdown,
-    WorkspaceDiagnosticRequest, WorkspaceSymbolRequest,
-};
+use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Shutdown, WorkspaceSymbolRequest};
 use lsp_types::{notification::Initialized, request::Initialize, InitializedParams};
 use lsp_types::{
     Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-    DocumentDiagnosticParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
-    GotoDefinitionResponse, InitializeParams, Location, Position, PublishDiagnosticsParams, Range,
-    SymbolInformation, SymbolKind, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, Url, WorkspaceDiagnosticParams, WorkspaceDocumentDiagnosticReport,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    InitializeParams, Location, Position, PublishDiagnosticsParams, Range, SymbolInformation,
+    SymbolKind, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
     WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use pbls::Result;
@@ -320,24 +315,22 @@ fn test_open() -> pbls::Result<()> {
 fn test_diagnostics_on_open() -> pbls::Result<()> {
     let client = TestClient::new()?;
 
-    let uri = Url::from_file_path(std::fs::canonicalize("testdata/error.proto")?).unwrap();
-
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
-            uri: uri.clone(),
+            uri: error_uri(),
             language_id: "".into(),
             version: 0,
             text: "".into(),
         },
     })?;
     let diags = client.recv::<PublishDiagnostics>()?;
-    assert_eq!(diags.uri, uri);
+    assert_eq!(diags.uri, error_uri());
     assert_elements_equal(
         diags.diagnostics,
         vec![
-            diag(uri.clone(), "Thingy t =", "\"Thingy\" is not defined."),
+            diag(error_uri(), "Thingy t =", "\"Thingy\" is not defined."),
             diag(
-                uri,
+                error_uri(),
                 "int32 foo =",
                 "Field number 1 has already been used in \"main.Bar\" by field \"f\"",
             ),

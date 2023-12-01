@@ -1,24 +1,5 @@
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-fn node_name<'a>(source: &'a [u8], node: tree_sitter::Node) -> Option<&'a str> {
-    let mut cursor = node.walk();
-    let name = node
-        .named_children(&mut cursor)
-        .find(|c| c.kind() == "message_name" || c.kind() == "enum_name");
-    name.and_then(|c| c.utf8_text(source).ok())
-}
-
-fn find_parent<'a>(
-    node: Option<tree_sitter::Node<'a>>,
-    kind: &str,
-) -> Option<tree_sitter::Node<'a>> {
-    match node {
-        None => None,
-        Some(n) if n.kind() == kind => Some(n),
-        Some(n) => find_parent(n.parent(), kind),
-    }
-}
-
 #[derive(Debug, PartialEq)]
 pub enum CompletionContext {
     Message(String),
@@ -45,7 +26,12 @@ impl Tree {
         })
     }
 
-    pub fn is_import_completion(self: &Self, row: usize, col: usize) -> bool {
+    fn is_import_completion(self: &Self, row: usize, col: usize) -> bool {
+        eprintln!(
+            "import completion: {:?} : {:?}",
+            col > "import ".len(),
+            self.text.lines().skip(row).next()
+        );
         col > "import ".len()
             && self
                 .text
@@ -55,6 +41,28 @@ impl Tree {
                 .map_or(false, |line| line.starts_with("import "))
     }
 
+    fn node_name(&self, node: tree_sitter::Node) -> Option<String> {
+        let mut cursor = node.walk();
+        let child = node
+            .named_children(&mut cursor)
+            .find(|c| c.kind() == "message_name" || c.kind() == "enum_name");
+        child
+            .and_then(|c| c.utf8_text(self.text.as_bytes()).ok())
+            .map(|s| s.to_string())
+    }
+
+    fn parent_context(&self, node: Option<tree_sitter::Node>) -> Option<CompletionContext> {
+        match node {
+            None => None,
+            Some(n) if n.kind() == "enum" => self
+                .node_name(n)
+                .and_then(|n| Some(CompletionContext::Enum(n))),
+            Some(n) if n.kind() == "message" => self
+                .node_name(n)
+                .and_then(|n| Some(CompletionContext::Message(n))),
+            Some(n) => self.parent_context(n.parent()),
+        }
+    }
     pub fn completion_context(self: &Self, row: usize, col: usize) -> Option<CompletionContext> {
         let pos = tree_sitter::Point {
             row: row.try_into().unwrap(),
@@ -65,18 +73,14 @@ impl Tree {
             .root_node()
             .named_descendant_for_point_range(pos, pos)?;
 
-        match node.kind() {
-            "source_file" if self.is_import_completion(row, col) => Some(CompletionContext::Import),
-            "string" if node.parent().is_some_and(|p| p.kind() == "import") => {
-                Some(CompletionContext::Import)
-            }
-            "type" | "message_body" => find_parent(Some(node), "message")
-                .and_then(|n| node_name(self.text.as_bytes(), n))
-                .map(|name| CompletionContext::Message(name.into())),
-            "enum_body" => find_parent(Some(node), "enum")
-                .and_then(|n| node_name(self.text.as_bytes(), n))
-                .map(|name| CompletionContext::Enum(name.into())),
-            _ => None,
+        eprintln!("Completion {node:?}");
+
+        if let Some(parent) = self.parent_context(Some(node)) {
+            Some(parent)
+        } else if self.is_import_completion(row, col) {
+            Some(CompletionContext::Import)
+        } else {
+            None
         }
     }
 }
