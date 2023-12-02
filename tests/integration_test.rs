@@ -138,6 +138,22 @@ fn locate(uri: Url, name: &str) -> Location {
     }
 }
 
+fn completion_params(uri: Url, position: Position) -> CompletionParams {
+    CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: base_uri() },
+            position,
+        },
+        work_done_progress_params: WorkDoneProgressParams {
+            work_done_token: None,
+        },
+        partial_result_params: PartialResultParams {
+            partial_result_token: None,
+        },
+        context: None,
+    }
+}
+
 fn assert_elements_equal<T, K, F>(mut a: Vec<T>, mut b: Vec<T>, key: F)
 where
     T: Clone + std::fmt::Debug + std::cmp::PartialEq,
@@ -277,6 +293,19 @@ impl TestClient {
                 params: serde_json::to_value(params)?,
             }))?;
         Ok(())
+    }
+
+    fn open(&self, uri: Url) -> pbls::Result<PublishDiagnosticsParams> {
+        let text = std::fs::read_to_string(uri.path())?;
+        self.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri,
+                language_id: "".into(),
+                version: 0,
+                text,
+            },
+        })?;
+        self.recv::<PublishDiagnostics>()
     }
 }
 
@@ -665,22 +694,13 @@ fn test_complete_import() -> pbls::Result<()> {
         content_changes: vec![change],
     })?;
 
-    let resp = client.request::<Completion>(CompletionParams {
-        text_document_position: TextDocumentPositionParams {
-            text_document: TextDocumentIdentifier { uri: base_uri() },
-            position: Position {
-                line: 1,
-                character: "import \"".len().try_into().unwrap(),
-            },
+    let resp = client.request::<Completion>(completion_params(
+        base_uri(),
+        Position {
+            line: 2,
+            character: "import \"".len().try_into().unwrap(),
         },
-        work_done_progress_params: WorkDoneProgressParams {
-            work_done_token: None,
-        },
-        partial_result_params: PartialResultParams {
-            partial_result_token: None,
-        },
-        context: None,
-    })?;
+    ))?;
 
     let Some(lsp_types::CompletionResponse::Array(actual)) = resp else {
         panic!("Unexpected completion response {resp:?}");
@@ -701,6 +721,125 @@ fn test_complete_import() -> pbls::Result<()> {
                 label: "error.proto".into(),
                 kind: Some(CompletionItemKind::FILE),
                 insert_text: Some("error.proto\";".into()),
+                ..Default::default()
+            },
+        ],
+        |s| s.label.clone(),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_complete_keyword() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+
+    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: base_uri().clone(),
+            language_id: "".into(),
+            version: 0,
+            text: "".into(),
+        },
+    })?;
+    client.recv::<PublishDiagnostics>()?;
+
+    // get completion on the line after "package"
+    let loc = locate(base_uri(), "package main;");
+
+    let resp = client.request::<Completion>(completion_params(
+        base_uri(),
+        Position {
+            line: loc.range.end.line + 1,
+            character: 0,
+        },
+    ))?;
+
+    let Some(lsp_types::CompletionResponse::Array(actual)) = resp else {
+        panic!("Unexpected completion response {resp:?}");
+    };
+
+    assert_elements_equal(
+        actual,
+        vec![
+            CompletionItem {
+                label: "message".into(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "enum".into(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "import".into(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                ..Default::default()
+            },
+        ],
+        |s| s.label.clone(),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_complete_type() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+    client.open(base_uri())?;
+
+    // get completion in the body of message Foo.
+    let pos = locate(base_uri(), "message Foo {").range.start;
+
+    let resp = client.request::<Completion>(completion_params(
+        base_uri(),
+        Position {
+            line: pos.line + 1,
+            character: 0,
+        },
+    ))?;
+
+    let Some(lsp_types::CompletionResponse::Array(actual)) = resp else {
+        panic!("Unexpected completion response {resp:?}");
+    };
+
+    assert_elements_equal(
+        actual,
+        vec![
+            CompletionItem {
+                label: "message".into(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "enum".into(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "Bar".into(),
+                kind: Some(CompletionItemKind::STRUCT),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "Empty".into(),
+                kind: Some(CompletionItemKind::STRUCT),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "Foo".into(),
+                kind: Some(CompletionItemKind::STRUCT),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "Foo.Buz".into(),
+                kind: Some(CompletionItemKind::STRUCT),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "Thing".into(),
+                kind: Some(CompletionItemKind::ENUM),
                 ..Default::default()
             },
         ],

@@ -12,6 +12,7 @@ enum Thing {
 }
 
 message Foo {
+
   int32 i = 1;
   Thing t = 2;
   Dep d = 3;

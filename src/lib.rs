@@ -157,9 +157,21 @@ fn handle_completion(
     match workspace.completion_context(&uri, pos.line.try_into()?, pos.character.try_into()?)? {
         Some(syntax::CompletionContext::Message(_)) => complete_types(workspace, uri),
         Some(syntax::CompletionContext::Enum(_)) => Ok(None), // TODO
+        Some(syntax::CompletionContext::Keyword) => Ok(complete_keywords()),
         Some(syntax::CompletionContext::Import) => complete_imports(workspace, uri),
         None => Ok(None),
     }
+}
+
+fn complete_keywords() -> Option<CompletionResponse> {
+    let items = ["message", "enum", "import"]
+        .iter()
+        .map(|s| CompletionItem {
+            label: s.to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            ..Default::default()
+        });
+    Some(CompletionResponse::Array(items.collect()))
 }
 
 fn complete_types(
@@ -178,7 +190,14 @@ fn complete_types(
         documentation: None,
         ..Default::default()
     });
-    Ok(Some(CompletionResponse::Array(items.collect())))
+    let keywords = ["message", "enum"].map(|s| CompletionItem {
+        label: s.to_string(),
+        kind: Some(CompletionItemKind::KEYWORD),
+        ..Default::default()
+    });
+    Ok(Some(CompletionResponse::Array(
+        items.chain(keywords).collect(),
+    )))
 }
 
 fn complete_imports(
