@@ -702,12 +702,6 @@ fn test_complete_import() -> pbls::Result<()> {
                 insert_text: Some("error.proto\";".into()),
                 ..Default::default()
             },
-            CompletionItem {
-                label: "simple.proto".into(),
-                kind: Some(CompletionItemKind::FILE),
-                insert_text: Some("simple.proto\";".into()),
-                ..Default::default()
-            },
         ],
         |s| s.label.clone(),
     );

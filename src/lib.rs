@@ -132,7 +132,6 @@ fn handle_goto_definition(
         .map(|n| n + charno)
         .unwrap_or(line.len());
     let name = &line[fore..aft];
-    eprintln!("Getting definition for {name}");
 
     let all = workspace.all_symbols()?;
     let sym = all
@@ -154,7 +153,6 @@ fn handle_completion(
     params: CompletionParams,
 ) -> Result<Option<CompletionResponse>> {
     let pos = params.text_document_position.position;
-    eprintln!("Complete: {pos:?}");
     let uri = params.text_document_position.text_document.uri;
     match workspace.completion_context(&uri, pos.line.try_into()?, pos.character.try_into()?)? {
         Some(syntax::CompletionContext::Message(_)) => complete_types(workspace, uri),
@@ -185,16 +183,26 @@ fn complete_types(
 
 fn complete_imports(
     workspace: &mut workspace::Workspace,
-    _: lsp_types::Url, // TODO: use this to exclude already-imported files
+    url: lsp_types::Url, // TODO: use this to exclude already-imported files
     pos: lsp_types::Position,
 ) -> Result<Option<CompletionResponse>> {
-    let items = workspace.available_imports().map(|s| CompletionItem {
-        label: s.clone(),
-        label_details: None,
-        kind: Some(CompletionItemKind::FILE),
-        insert_text: Some(format!("{}\";", s)),
-        ..Default::default()
-    });
+    let path = url.to_file_path().unwrap();
+    let name = path
+        .as_path()
+        .file_name()
+        .ok_or("Path missing basename: {uri:?}")?
+        .to_str()
+        .ok_or("Path is not valid unicode: {uri:?}")?;
+    let items = workspace
+        .available_imports()
+        .filter(|s| s != name) // exclude importing ourself
+        .map(|s| CompletionItem {
+            label: s.clone(),
+            label_details: None,
+            kind: Some(CompletionItemKind::FILE),
+            insert_text: Some(format!("{}\";", s)),
+            ..Default::default()
+        });
     Ok(Some(CompletionResponse::Array(items.collect())))
 }
 
