@@ -646,7 +646,12 @@ fn test_complete_import() -> pbls::Result<()> {
     })?;
     client.recv::<PublishDiagnostics>()?;
 
-    let text = vec!["syntax = \"proto3\";", "import \""].join("\n");
+    let text = vec![
+        "syntax = \"proto3\";",
+        "import \"other.proto\";",
+        "import \"",
+    ]
+    .join("\n");
     let change = TextDocumentContentChangeEvent {
         text: text.into(),
         range: None,
@@ -681,15 +686,11 @@ fn test_complete_import() -> pbls::Result<()> {
         panic!("Unexpected completion response {resp:?}");
     };
 
+    // excludes simple.proto (the current file)
+    // excludes other.proto (already imported)
     assert_elements_equal(
         actual,
         vec![
-            CompletionItem {
-                label: "other.proto".into(),
-                kind: Some(CompletionItemKind::FILE),
-                insert_text: Some("other.proto\";".into()),
-                ..Default::default()
-            },
             CompletionItem {
                 label: "dep.proto".into(),
                 kind: Some(CompletionItemKind::FILE),

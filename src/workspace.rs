@@ -69,10 +69,18 @@ impl Workspace {
         Ok(tree.completion_context(line, character))
     }
 
-    // Iterate the names of all proto files on the import paths.
-    // TODO: Exclude files already imported.
-    pub fn available_imports<'a>(&'a self) -> impl Iterator<Item = String> + 'a {
-        self.proto_paths
+    // Return all available imports for a given file.
+    // Excludes the file itself and any files already imported.
+    pub fn available_imports<'a>(
+        &'a self,
+        uri: &'a Url,
+    ) -> Result<impl Iterator<Item = String> + 'a> {
+        let name = std::path::Path::new(uri.path())
+            .file_name()
+            .ok_or("Invalid path: {uri}")?;
+        let tree = self.trees.get(uri).ok_or("File not loaded: {uri}")?;
+        Ok(self
+            .proto_paths
             .iter()
             .filter_map(|dir| std::fs::read_dir(dir).ok())
             .flatten()
@@ -80,5 +88,7 @@ impl Workspace {
             .filter(|entry| entry.metadata().is_ok_and(|m| m.is_file()))
             .filter_map(|entry| entry.file_name().into_string().ok())
             .filter(|fname| fname.ends_with(".proto"))
+            .filter(move |fname| fname.as_str() != name)
+            .filter(|fname| !tree.imports.contains(fname)))
     }
 }

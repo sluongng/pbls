@@ -10,6 +10,7 @@ pub enum CompletionContext {
 pub struct Tree {
     tree: tree_sitter::Tree,
     text: String,
+    pub imports: Vec<String>,
 }
 
 impl Tree {
@@ -20,18 +21,27 @@ impl Tree {
             .set_language(tree_sitter_proto::language())
             .expect("Error loading proto language");
 
+        let tree = parser.parse(&text, None).ok_or("Parse failed")?;
+        let mut cursor = tree.walk();
+        let imports = tree
+            .root_node()
+            .named_children(&mut cursor)
+            .filter(|c| c.kind() == "import")
+            .filter_map(|c| c.child_by_field_name("path"))
+            .filter_map(|c| c.utf8_text(text.as_bytes()).ok())
+            .map(|s| s.trim_matches('"').to_string());
+
+        let imports = imports.collect();
+        eprintln!("Updating imports to {imports:?}");
+
         Ok(Tree {
-            tree: parser.parse(&text, None).ok_or("Parse failed")?,
+            tree: tree.to_owned(),
             text,
+            imports,
         })
     }
 
     fn is_import_completion(self: &Self, row: usize, col: usize) -> bool {
-        eprintln!(
-            "import completion: {:?} : {:?}",
-            col > "import ".len(),
-            self.text.lines().skip(row).next()
-        );
         col > "import ".len()
             && self
                 .text
@@ -63,6 +73,7 @@ impl Tree {
             Some(n) => self.parent_context(n.parent()),
         }
     }
+
     pub fn completion_context(self: &Self, row: usize, col: usize) -> Option<CompletionContext> {
         let pos = tree_sitter::Point {
             row: row.try_into().unwrap(),
