@@ -16,3 +16,4 @@ tree-sitter = "0.19.5"
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
+tempfile = "3.8.1"

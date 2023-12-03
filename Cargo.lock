@@ -235,6 +235,7 @@ dependencies = [
  "protobuf-parse",
  "serde",
  "serde_json",
+ "tempfile",
  "toml",
  "tree-sitter",
  "tree-sitter-proto",

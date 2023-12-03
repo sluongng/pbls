@@ -166,45 +166,6 @@ where
     assert_eq!(a, b);
 }
 
-struct TempDir(std::path::PathBuf);
-
-impl TempDir {
-    fn new() -> TempDir {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("pbls-test-{now}"));
-        std::fs::create_dir_all(&path).unwrap();
-        TempDir(path)
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.0).unwrap();
-    }
-}
-
-impl AsRef<std::path::Path> for TempDir {
-    fn as_ref(&self) -> &std::path::Path {
-        &self.0
-    }
-}
-
-impl std::ops::Deref for TempDir {
-    type Target = std::path::PathBuf;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for TempDir {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
 struct TestClient {
     conn: Connection,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -378,8 +339,8 @@ fn test_diagnostics_on_open() -> pbls::Result<()> {
 
 #[test]
 fn test_diagnostics_on_save() -> pbls::Result<()> {
-    let tmp = TempDir::new();
-    let path = tmp.join("example.proto");
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("example.proto");
     let uri = Url::from_file_path(&path).unwrap();
     let client = TestClient::new_with_root(&tmp)?;
 
@@ -871,22 +832,22 @@ fn test_import_discovery() -> pbls::Result<()> {
     // └── loop
     //     └── loop -> ../loop
 
-    let tmp = TempDir::new();
+    let tmp = tempfile::tempdir()?;
 
-    std::fs::create_dir_all(tmp.join("a/f"))?;
-    std::fs::create_dir_all(tmp.join("b/c"))?;
-    std::fs::create_dir_all(tmp.join("b/d"))?;
-    std::fs::create_dir_all(tmp.join("e"))?;
-    std::fs::create_dir_all(tmp.join("loop"))?;
+    std::fs::create_dir_all(tmp.path().join("a/f"))?;
+    std::fs::create_dir_all(tmp.path().join("b/c"))?;
+    std::fs::create_dir_all(tmp.path().join("b/d"))?;
+    std::fs::create_dir_all(tmp.path().join("e"))?;
+    std::fs::create_dir_all(tmp.path().join("loop"))?;
 
     #[cfg(unix)]
-    std::os::unix::fs::symlink(tmp.join("loop"), tmp.join("loop/loop"))?;
+    std::os::unix::fs::symlink(tmp.path().join("loop"), tmp.path().join("loop/loop"))?;
 
     #[cfg(windows)]
-    std::os::windows::fs::symlink_dir(tmp.join("loop"), tmp.join("loop/loop"))?;
+    std::os::windows::fs::symlink_dir(tmp.path().join("loop"), tmp.path().join("loop/loop"))?;
 
     std::fs::write(
-        &tmp.join("root.proto"),
+        &tmp.path().join("root.proto"),
         r#"
         syntax = "proto3"; 
 
@@ -904,26 +865,29 @@ fn test_import_discovery() -> pbls::Result<()> {
     )?;
 
     std::fs::write(
-        &tmp.join("sibling.proto"),
+        &tmp.path().join("sibling.proto"),
         "syntax = \"proto3\"; message Sibling{}",
     )?;
 
-    std::fs::write(&tmp.join("a/a.txt"), "not a proto")?;
-    std::fs::write(&tmp.join("a/a.proto"), "syntax = \"proto3\"; message A{}")?;
+    std::fs::write(&tmp.path().join("a/a.txt"), "not a proto")?;
     std::fs::write(
-        &tmp.join("a/f/af.proto"),
+        &tmp.path().join("a/a.proto"),
+        "syntax = \"proto3\"; message A{}",
+    )?;
+    std::fs::write(
+        &tmp.path().join("a/f/af.proto"),
         "syntax = \"proto3\"; message AF{}",
     )?;
 
-    std::fs::write(&tmp.join("b/c/bc.txt"), "not a proto")?;
+    std::fs::write(&tmp.path().join("b/c/bc.txt"), "not a proto")?;
     std::fs::write(
-        &tmp.join("b/c/bc.proto"),
+        &tmp.path().join("b/c/bc.proto"),
         "syntax = \"proto3\"; message BC{}",
     )?;
 
-    std::fs::write(&tmp.join("b/d/bd.txt"), "not a proto")?;
+    std::fs::write(&tmp.path().join("b/d/bd.txt"), "not a proto")?;
 
-    let root_uri = Url::from_file_path(&tmp.join("root.proto")).unwrap();
+    let root_uri = Url::from_file_path(&tmp.path().join("root.proto")).unwrap();
     let client = TestClient::new_with_root(&tmp)?;
 
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
