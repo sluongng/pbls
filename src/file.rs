@@ -1,6 +1,18 @@
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Debug, PartialEq)]
+pub enum SymbolKind {
+    Message,
+    Enum,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Symbol {
+    pub kind: SymbolKind,
+    pub name: String,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum CompletionContext {
     Message(String),
     Enum(String),
@@ -13,6 +25,7 @@ pub struct File {
     text: String,
     pub package: Option<String>,
     pub imports: Vec<String>,
+    pub symbols: Vec<Symbol>,
 }
 
 impl File {
@@ -25,6 +38,8 @@ impl File {
 
         let tree = parser.parse(&text, None).ok_or("Parse failed")?;
         eprintln!("Parsed: {}", tree.root_node().to_sexp());
+
+        // TODO: Use node kind IDs
 
         // Locate all imports
         let mut cursor = tree.walk();
@@ -46,11 +61,26 @@ impl File {
             .and_then(|c| c.utf8_text(text.as_bytes()).ok())
             .map(|t| t.to_string());
 
+        let symbols = tree
+            .root_node()
+            .named_children(&mut cursor)
+            .filter(|c| c.kind() == "message" || c.kind() == "enum")
+            .filter_map(|c| type_name(c, text.as_bytes()).map(|name| (c, name)))
+            .map(|(node, name)| Symbol {
+                kind: match node.kind() {
+                    "message" => SymbolKind::Message,
+                    _ => SymbolKind::Enum,
+                },
+                name,
+            })
+            .collect();
+
         Ok(File {
             tree: tree.to_owned(),
             text,
             imports,
             package,
+            symbols,
         })
     }
 
@@ -64,28 +94,17 @@ impl File {
                 .map_or(false, |line| line.starts_with("import "))
     }
 
-    fn node_name(&self, node: tree_sitter::Node) -> Option<String> {
-        debug_assert!(node.kind() == "enum" || node.kind() == "message");
-        let mut cursor = node.walk();
-        let child = node
-            .named_children(&mut cursor)
-            .find(|c| c.kind() == "message_name" || c.kind() == "enum_name");
-        child
-            .and_then(|c| c.utf8_text(self.text.as_bytes()).ok())
-            .map(|s| s.to_string())
-    }
-
     fn parent_context(&self, node: Option<tree_sitter::Node>) -> Option<CompletionContext> {
         eprintln!("Check parent {node:?}");
         match node {
             None => None,
             Some(n) if n.kind() == "enum_body" => n
                 .parent() // enum
-                .and_then(|p| self.node_name(p))
+                .and_then(|p| type_name(p, self.text.as_bytes()))
                 .and_then(|n| Some(CompletionContext::Enum(n))),
             Some(n) if n.kind() == "message_body" => n
                 .parent() // message
-                .and_then(|p| self.node_name(p))
+                .and_then(|p| type_name(p, self.text.as_bytes()))
                 .and_then(|n| Some(CompletionContext::Message(n))),
             Some(n) => self.parent_context(n.parent()),
         }
@@ -111,6 +130,18 @@ impl File {
             Some(CompletionContext::Keyword)
         }
     }
+}
+
+// Get the name of a Enum or Message node.
+fn type_name(node: tree_sitter::Node, text: &[u8]) -> Option<String> {
+    debug_assert!(node.kind() == "enum" || node.kind() == "message");
+    let mut cursor = node.walk();
+    let child = node
+        .named_children(&mut cursor)
+        .find(|c| c.kind() == "message_name" || c.kind() == "enum_name");
+    child
+        .and_then(|c| c.utf8_text(text).ok())
+        .map(|s| s.to_string())
 }
 
 #[cfg(test)]
@@ -151,6 +182,37 @@ mod tests {
         let text = r#"syntax="proto3";"#;
         let file = File::new(text.to_string()).unwrap();
         assert_eq!(file.package, None);
+    }
+
+    #[test]
+    fn test_symbols() {
+        let text = r#"
+            syntax="proto3"; 
+            package main;
+            message Foo{}
+            enum Bar{}
+            message Baz{
+                int i = 1;
+            }
+        "#;
+        let file = File::new(text.to_string()).unwrap();
+        assert_eq!(
+            file.symbols,
+            vec![
+                Symbol {
+                    kind: SymbolKind::Message,
+                    name: "Foo".into(),
+                },
+                Symbol {
+                    kind: SymbolKind::Enum,
+                    name: "Bar".into(),
+                },
+                Symbol {
+                    kind: SymbolKind::Message,
+                    name: "Baz".into(),
+                }
+            ]
+        );
     }
 
     #[test]
