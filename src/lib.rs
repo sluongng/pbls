@@ -1,5 +1,5 @@
+mod file;
 mod parser;
-mod syntax;
 mod workspace;
 use lsp_types::notification::DidChangeTextDocument;
 use lsp_types::request::Completion;
@@ -155,10 +155,10 @@ fn handle_completion(
     let pos = params.text_document_position.position;
     let uri = params.text_document_position.text_document.uri;
     match workspace.completion_context(&uri, pos.line.try_into()?, pos.character.try_into()?)? {
-        Some(syntax::CompletionContext::Message(_)) => complete_types(workspace, uri),
-        Some(syntax::CompletionContext::Enum(_)) => Ok(None), // TODO
-        Some(syntax::CompletionContext::Keyword) => Ok(complete_keywords()),
-        Some(syntax::CompletionContext::Import) => complete_imports(workspace, uri),
+        Some(file::CompletionContext::Message(_)) => complete_types(workspace, uri),
+        Some(file::CompletionContext::Enum(_)) => Ok(None), // TODO
+        Some(file::CompletionContext::Keyword) => Ok(complete_keywords()),
+        Some(file::CompletionContext::Import) => complete_imports(workspace, uri),
         None => Ok(None),
     }
 }

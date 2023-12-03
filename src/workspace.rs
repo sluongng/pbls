@@ -1,4 +1,4 @@
-use crate::syntax;
+use crate::file;
 
 use super::parser::{ParseResult, Parser};
 use lsp_types::{SymbolInformation, Url};
@@ -8,7 +8,7 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub struct Workspace {
     proto_paths: Vec<std::path::PathBuf>,
     parser: Parser,
-    trees: std::collections::HashMap<Url, syntax::Tree>,
+    files: std::collections::HashMap<Url, file::File>,
 }
 
 impl Workspace {
@@ -16,22 +16,22 @@ impl Workspace {
         Workspace {
             proto_paths: proto_paths.clone(),
             parser: Parser::new(proto_paths),
-            trees: std::collections::HashMap::new(),
+            files: std::collections::HashMap::new(),
         }
     }
 
     pub fn open(&mut self, uri: Url, text: String) -> Result<ParseResult> {
-        self.trees.insert(uri.clone(), syntax::Tree::new(text)?);
+        self.files.insert(uri.clone(), file::File::new(text)?);
         self.parser.reparse(uri)
     }
 
     pub fn save(&mut self, uri: Url, text: String) -> Result<ParseResult> {
-        self.trees.insert(uri.clone(), syntax::Tree::new(text)?);
+        self.files.insert(uri.clone(), file::File::new(text)?);
         self.parser.reparse(uri)
     }
 
     pub fn edit(&mut self, uri: &Url, text: String) -> Result<ParseResult> {
-        self.trees.insert(uri.clone(), syntax::Tree::new(text)?);
+        self.files.insert(uri.clone(), file::File::new(text)?);
         self.parser.reparse(uri.clone())
     }
 
@@ -61,9 +61,9 @@ impl Workspace {
         uri: &Url,
         line: usize,
         character: usize,
-    ) -> Result<Option<syntax::CompletionContext>> {
+    ) -> Result<Option<file::CompletionContext>> {
         let tree = self
-            .trees
+            .files
             .get(uri)
             .ok_or("Completion requested on file with no tree for {uri}")?;
         Ok(tree.completion_context(line, character))
@@ -78,7 +78,7 @@ impl Workspace {
         let name = std::path::Path::new(uri.path())
             .file_name()
             .ok_or("Invalid path: {uri}")?;
-        let tree = self.trees.get(uri).ok_or("File not loaded: {uri}")?;
+        let tree = self.files.get(uri).ok_or("File not loaded: {uri}")?;
         Ok(self
             .proto_paths
             .iter()

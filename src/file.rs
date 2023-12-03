@@ -8,14 +8,15 @@ pub enum CompletionContext {
     Keyword,
 }
 
-pub struct Tree {
+pub struct File {
     tree: tree_sitter::Tree,
     text: String,
+    pub package: Option<String>,
     pub imports: Vec<String>,
 }
 
-impl Tree {
-    pub fn new(text: String) -> Result<Tree> {
+impl File {
+    pub fn new(text: String) -> Result<File> {
         // TODO: cache parser/language?
         let mut parser = tree_sitter::Parser::new();
         parser
@@ -24,6 +25,8 @@ impl Tree {
 
         let tree = parser.parse(&text, None).ok_or("Parse failed")?;
         eprintln!("Parsed: {}", tree.root_node().to_sexp());
+
+        // Locate all imports
         let mut cursor = tree.walk();
         let imports = tree
             .root_node()
@@ -31,15 +34,23 @@ impl Tree {
             .filter(|c| c.kind() == "import")
             .filter_map(|c| c.child_by_field_name("path"))
             .filter_map(|c| c.utf8_text(text.as_bytes()).ok())
-            .map(|s| s.trim_matches('"').to_string());
+            .map(|s| s.trim_matches('"').to_string())
+            .collect();
 
-        let imports = imports.collect();
-        eprintln!("Updating imports to {imports:?}");
+        // Look for (package (full_ident (identifier)))
+        let package = tree
+            .root_node()
+            .named_children(&mut cursor)
+            .find(|c| c.kind() == "package")
+            .and_then(|c| c.child(1)) // identifier
+            .and_then(|c| c.utf8_text(text.as_bytes()).ok())
+            .map(|t| t.to_string());
 
-        Ok(Tree {
+        Ok(File {
             tree: tree.to_owned(),
             text,
             imports,
+            package,
         })
     }
 
@@ -128,7 +139,22 @@ mod tests {
     }
 
     #[test]
-    fn test_enclosing_type() {
+    fn test_package() {
+        let text = r#"syntax="proto3"; package main;"#;
+        let file = File::new(text.to_string()).unwrap();
+        assert_eq!(file.package, Some("main".into()));
+
+        let text = r#"syntax="proto3"; package main; package other"#;
+        let file = File::new(text.to_string()).unwrap();
+        assert_eq!(file.package, Some("main".into()));
+
+        let text = r#"syntax="proto3";"#;
+        let file = File::new(text.to_string()).unwrap();
+        assert_eq!(file.package, None);
+    }
+
+    #[test]
+    fn test_completion_context() {
         let (source, points) = cursors(
             r#"
             synt|ax = "proto3";
@@ -162,7 +188,7 @@ mod tests {
         assert_eq!(
             points
                 .iter()
-                .map(|p| Tree::new(source.clone())
+                .map(|p| File::new(source.clone())
                     .unwrap()
                     .completion_context(p.row, p.column))
                 .collect::<Vec<Option<CompletionContext>>>(),

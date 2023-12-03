@@ -141,7 +141,7 @@ fn locate(uri: Url, name: &str) -> Location {
 fn completion_params(uri: Url, position: Position) -> CompletionParams {
     CompletionParams {
         text_document_position: TextDocumentPositionParams {
-            text_document: TextDocumentIdentifier { uri: base_uri() },
+            text_document: TextDocumentIdentifier { uri },
             position,
         },
         work_done_progress_params: WorkDoneProgressParams {
