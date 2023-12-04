@@ -41,16 +41,41 @@ impl File {
 
         // TODO: Use node kind IDs
 
+        let bytes = text.as_bytes();
+
+        // Locate imports.
+        let query = tree_sitter::Query::new(
+            tree_sitter_proto::language(),
+            "(package (full_ident (identifier) @ident))",
+        )?;
+        let mut qc = tree_sitter::QueryCursor::new();
+        let imports = qc
+            .matches(&query, tree.root_node(), |n| {
+                n.utf8_text(bytes).unwrap().as_bytes()
+            })
+            .filter_map(|m| m.captures.first())
+            .filter_map(|c| c.node.utf8_text(text.as_bytes()).ok())
+            .map(|s| s.to_string())
+            .collect();
+
+        let query = tree_sitter::Query::new(
+            tree_sitter_proto::language(),
+            "(message (message_name (identifier) @name))",
+        )?;
+        let mut qc = tree_sitter::QueryCursor::new();
+        let syms: Vec<_> = qc
+            .matches(&query, tree.root_node(), |n| {
+                n.utf8_text(bytes).unwrap().as_bytes()
+            })
+            .filter_map(|m| m.captures.first())
+            .filter_map(|c| c.node.utf8_text(text.as_bytes()).ok())
+            .map(|s| s.to_string())
+            .collect();
+
+        eprintln!("syms: {syms:?}");
+
         // Locate all imports
         let mut cursor = tree.walk();
-        let imports = tree
-            .root_node()
-            .named_children(&mut cursor)
-            .filter(|c| c.kind() == "import")
-            .filter_map(|c| c.child_by_field_name("path"))
-            .filter_map(|c| c.utf8_text(text.as_bytes()).ok())
-            .map(|s| s.trim_matches('"').to_string())
-            .collect();
 
         // Look for (package (full_ident (identifier)))
         let package = tree
@@ -213,6 +238,17 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn test_wip() {
+        let text = r#"
+            syntax="proto3"; 
+            package main;
+            message Foo{message Bar{message Baz{}}}
+        "#;
+        let file = File::new(text.to_string()).unwrap();
+        assert!(false);
     }
 
     #[test]
