@@ -10,6 +10,7 @@ pub enum SymbolKind {
 pub struct Symbol {
     pub kind: SymbolKind,
     pub name: String,
+    pub ancestors: Vec<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -40,63 +41,54 @@ impl File {
         eprintln!("Parsed: {}", tree.root_node().to_sexp());
 
         // TODO: Use node kind IDs
-
         let bytes = text.as_bytes();
+        let get_text = |node: tree_sitter::Node| node.utf8_text(bytes).unwrap();
 
-        // Locate imports.
+        // Package
         let query = tree_sitter::Query::new(
             tree_sitter_proto::language(),
-            "(package (full_ident (identifier) @ident))",
+            "(package (full_ident (identifier) @id))",
+        )?;
+        let mut qc = tree_sitter::QueryCursor::new();
+        let package = qc
+            .matches(&query, tree.root_node(), get_text)
+            .next()
+            .map(|m| m.captures[0].node)
+            .map(get_text)
+            .map(|s| s.trim_matches('"').to_string());
+
+        // Imports
+        let query = tree_sitter::Query::new(
+            tree_sitter_proto::language(),
+            "(import path: (string) @path)",
         )?;
         let mut qc = tree_sitter::QueryCursor::new();
         let imports = qc
-            .matches(&query, tree.root_node(), |n| {
-                n.utf8_text(bytes).unwrap().as_bytes()
-            })
-            .filter_map(|m| m.captures.first())
-            .filter_map(|c| c.node.utf8_text(text.as_bytes()).ok())
-            .map(|s| s.to_string())
+            .matches(&query, tree.root_node(), get_text)
+            .map(|m| m.captures[0].node)
+            .map(get_text)
+            .map(|s| s.trim_matches('"').to_string())
             .collect();
 
+        // Symbols
         let query = tree_sitter::Query::new(
             tree_sitter_proto::language(),
-            "(message (message_name (identifier) @name))",
+            "[
+                (message (message_name (identifier) @id))
+                (enum (enum_name (identifier) @id))
+            ] @def",
         )?;
         let mut qc = tree_sitter::QueryCursor::new();
-        let syms: Vec<_> = qc
-            .matches(&query, tree.root_node(), |n| {
-                n.utf8_text(bytes).unwrap().as_bytes()
-            })
-            .filter_map(|m| m.captures.first())
-            .filter_map(|c| c.node.utf8_text(text.as_bytes()).ok())
-            .map(|s| s.to_string())
-            .collect();
-
-        eprintln!("syms: {syms:?}");
-
-        // Locate all imports
-        let mut cursor = tree.walk();
-
-        // Look for (package (full_ident (identifier)))
-        let package = tree
-            .root_node()
-            .named_children(&mut cursor)
-            .find(|c| c.kind() == "package")
-            .and_then(|c| c.child(1)) // identifier
-            .and_then(|c| c.utf8_text(text.as_bytes()).ok())
-            .map(|t| t.to_string());
-
-        let symbols = tree
-            .root_node()
-            .named_children(&mut cursor)
-            .filter(|c| c.kind() == "message" || c.kind() == "enum")
-            .filter_map(|c| type_name(c, text.as_bytes()).map(|name| (c, name)))
-            .map(|(node, name)| Symbol {
-                kind: match node.kind() {
+        let symbols = qc
+            .matches(&query, tree.root_node(), get_text)
+            .map(|m| (m.captures[0].node, m.captures[1].node))
+            .map(|(def, id)| Symbol {
+                kind: match def.kind() {
                     "message" => SymbolKind::Message,
                     _ => SymbolKind::Enum,
                 },
-                name,
+                name: get_text(id).into(),
+                ancestors: ancestors(def, bytes),
             })
             .collect();
 
@@ -157,9 +149,28 @@ impl File {
     }
 }
 
+fn ancestors(node: tree_sitter::Node, text: &[u8]) -> Vec<String> {
+    let mut node = node;
+    let mut res = Vec::<String>::new();
+    loop {
+        if let Some(parent) = node.parent() {
+            if parent.kind() == "message" {
+                type_name(parent, text).map(|n| res.push(n));
+            }
+            node = parent;
+        } else {
+            break;
+        }
+    }
+    res
+}
+
 // Get the name of a Enum or Message node.
 fn type_name(node: tree_sitter::Node, text: &[u8]) -> Option<String> {
-    debug_assert!(node.kind() == "enum" || node.kind() == "message");
+    debug_assert!(
+        node.kind() == "enum" || node.kind() == "message",
+        "{node:?}"
+    );
     let mut cursor = node.walk();
     let child = node
         .named_children(&mut cursor)
@@ -210,6 +221,19 @@ mod tests {
     }
 
     #[test]
+    fn test_imports() {
+        let text = r#"
+            syntax="proto3";
+            package main;
+            import "foo.proto";
+            import "bar.proto";
+            import "ba
+        "#;
+        let file = File::new(text.to_string()).unwrap();
+        assert_eq!(file.imports, vec!["foo.proto", "bar.proto"]);
+    }
+
+    #[test]
     fn test_symbols() {
         let text = r#"
             syntax="proto3"; 
@@ -217,7 +241,7 @@ mod tests {
             message Foo{}
             enum Bar{}
             message Baz{
-                int i = 1;
+                message Biz{}
             }
         "#;
         let file = File::new(text.to_string()).unwrap();
@@ -227,28 +251,25 @@ mod tests {
                 Symbol {
                     kind: SymbolKind::Message,
                     name: "Foo".into(),
+                    ancestors: vec![],
                 },
                 Symbol {
                     kind: SymbolKind::Enum,
                     name: "Bar".into(),
+                    ancestors: vec![],
                 },
                 Symbol {
                     kind: SymbolKind::Message,
                     name: "Baz".into(),
+                    ancestors: vec![],
+                },
+                Symbol {
+                    kind: SymbolKind::Message,
+                    name: "Biz".into(),
+                    ancestors: vec!["Baz".into()],
                 }
             ]
         );
-    }
-
-    #[test]
-    fn test_wip() {
-        let text = r#"
-            syntax="proto3"; 
-            package main;
-            message Foo{message Bar{message Baz{}}}
-        "#;
-        let file = File::new(text.to_string()).unwrap();
-        assert!(false);
     }
 
     #[test]
