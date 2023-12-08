@@ -11,6 +11,7 @@ pub struct Symbol {
     pub kind: SymbolKind,
     pub name: String,
     pub ancestors: Vec<String>,
+    pub range: tree_sitter::Range,
 }
 
 #[derive(Debug, PartialEq)]
@@ -89,6 +90,7 @@ impl File {
                 },
                 name: get_text(id).into(),
                 ancestors: ancestors(def, bytes),
+                range: def.range(),
             })
             .collect();
 
@@ -252,21 +254,45 @@ mod tests {
                     kind: SymbolKind::Message,
                     name: "Foo".into(),
                     ancestors: vec![],
+                    range: tree_sitter::Range {
+                        start_byte: 69,
+                        end_byte: 82,
+                        start_point: tree_sitter::Point { row: 3, column: 12 },
+                        end_point: tree_sitter::Point { row: 3, column: 25 },
+                    },
                 },
                 Symbol {
                     kind: SymbolKind::Enum,
                     name: "Bar".into(),
                     ancestors: vec![],
+                    range: tree_sitter::Range {
+                        start_byte: 95,
+                        end_byte: 105,
+                        start_point: tree_sitter::Point { row: 4, column: 12 },
+                        end_point: tree_sitter::Point { row: 4, column: 22 },
+                    },
                 },
                 Symbol {
                     kind: SymbolKind::Message,
                     name: "Baz".into(),
                     ancestors: vec![],
+                    range: tree_sitter::Range {
+                        start_byte: 118,
+                        end_byte: 174,
+                        start_point: tree_sitter::Point { row: 5, column: 12 },
+                        end_point: tree_sitter::Point { row: 7, column: 13 },
+                    },
                 },
                 Symbol {
                     kind: SymbolKind::Message,
                     name: "Biz".into(),
                     ancestors: vec!["Baz".into()],
+                    range: tree_sitter::Range {
+                        start_byte: 147,
+                        end_byte: 160,
+                        start_point: tree_sitter::Point { row: 6, column: 16 },
+                        end_point: tree_sitter::Point { row: 6, column: 29 },
+                    },
                 }
             ]
         );

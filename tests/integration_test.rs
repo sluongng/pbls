@@ -47,11 +47,11 @@ fn diag(uri: Url, target: &str, message: &str) -> Diagnostic {
 }
 
 fn sym(uri: Url, pkg: &str, name: &str, text: &str) -> SymbolInformation {
-    // deprecated field is deprecated, but cannot be omitted
     let kind = text
         .split_once(" ")
         .unwrap_or_else(|| panic!("Invalid symbol {text}"))
         .0;
+    // deprecated field is deprecated, but cannot be omitted
     #[allow(deprecated)]
     SymbolInformation {
         name: name.into(),
