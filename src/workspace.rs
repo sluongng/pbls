@@ -49,20 +49,22 @@ impl Workspace {
     }
 
     pub fn all_symbols(&mut self) -> Result<Vec<SymbolInformation>> {
-        Ok(self
-            .proto_paths
-            .iter()
-            .map(|p| Url::from_file_path(p).unwrap())
-            .map(|p| match self.files.get(&p) {
-                Some(file) => file.symbols().iter().map(|s| to_lsp_symbol(p, s)).collect(),
-                None => match self.open(p.clone(), std::fs::read_to_string(p.path()).unwrap()) {
-                    Ok(ParseResult::Syms(syms)) => syms,
-                    Ok(ParseResult::Diags(_)) => vec![],
-                    Err(_) => vec![],
-                },
-            })
-            .flatten()
-            .collect())
+        let mut res = vec![];
+        for path in &self.proto_paths {
+            let uri = Url::from_file_path(&path).or(Err(format!("Failed to open {path:?}")))?;
+            let file = if let Some(file) = self.files.get(&uri) {
+                file
+            } else {
+                let text = std::fs::read_to_string(uri.path())?;
+                let file = file::File::new(text)?;
+                self.files.insert(uri.clone(), file);
+                self.files.get(&uri).unwrap()
+            };
+            let symbols = &file.symbols();
+            let syms = symbols.iter().map(|s| to_lsp_symbol(uri.clone(), s));
+            res.extend(syms);
+        }
+        Ok(res)
     }
 
     pub fn completion_context(
