@@ -42,7 +42,7 @@ impl Workspace {
     pub fn symbols(&mut self, uri: Url) -> Result<Vec<SymbolInformation>> {
         Ok(self
             .get(&uri)?
-            .symbols
+            .symbols()
             .iter()
             .map(|s| to_lsp_symbol(uri.clone(), s))
             .collect())
@@ -85,6 +85,7 @@ impl Workspace {
             .file_name()
             .ok_or("Invalid path: {uri}")?;
         let file = self.files.get(uri).ok_or("File not loaded: {uri}")?;
+        let imports = file.imports();
         Ok(self
             .proto_paths
             .iter()
@@ -92,10 +93,11 @@ impl Workspace {
             .flatten()
             .filter_map(|entry| entry.ok())
             .filter(|entry| entry.metadata().is_ok_and(|m| m.is_file()))
-            .filter_map(|entry| entry.file_name().into_string().ok())
+            .map(|entry| entry.file_name())
+            .filter(move |fname| fname != name)
+            .filter_map(|fname| fname.into_string().ok())
             .filter(|fname| fname.ends_with(".proto"))
-            .filter(move |fname| fname.as_str() != name)
-            .filter(|fname| !file.imports.contains(fname)))
+            .filter(move |fname| !imports.contains(&fname.as_str())))
     }
 }
 

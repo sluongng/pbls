@@ -25,9 +25,6 @@ pub enum CompletionContext {
 pub struct File {
     tree: tree_sitter::Tree,
     text: String,
-    pub package: Option<String>,
-    pub imports: Vec<String>,
-    pub symbols: Vec<Symbol>,
 }
 
 impl File {
@@ -40,67 +37,65 @@ impl File {
 
         let tree = parser.parse(&text, None).ok_or("Parse failed")?;
         eprintln!("Parsed: {}", tree.root_node().to_sexp());
+        Ok(File { tree, text })
+    }
 
-        // TODO: Use node kind IDs
-        let bytes = text.as_bytes();
-        let get_text = |node: tree_sitter::Node| node.utf8_text(bytes).unwrap();
+    fn get_text(&self, node: tree_sitter::Node) -> &str {
+        node.utf8_text(self.text.as_bytes()).unwrap()
+    }
 
-        // Package
+    pub fn package(&self) -> Option<&str> {
         let query = tree_sitter::Query::new(
             tree_sitter_proto::language(),
             "(package (full_ident (identifier) @id))",
-        )?;
+        )
+        .unwrap();
         let mut qc = tree_sitter::QueryCursor::new();
-        let package = qc
-            .matches(&query, tree.root_node(), get_text)
+        let res = qc
+            .matches(&query, self.tree.root_node(), |n| self.get_text(n))
             .next()
             .map(|m| m.captures[0].node)
-            .map(get_text)
-            .map(|s| s.trim_matches('"').to_string());
+            .map(|n| self.get_text(n))
+            .map(|s| s.trim_matches('"'));
+        res
+    }
 
-        // Imports
+    pub fn imports(&self) -> Vec<&str> {
         let query = tree_sitter::Query::new(
             tree_sitter_proto::language(),
             "(import path: (string) @path)",
-        )?;
+        )
+        .unwrap();
         let mut qc = tree_sitter::QueryCursor::new();
-        let imports = qc
-            .matches(&query, tree.root_node(), get_text)
+        qc.matches(&query, self.tree.root_node(), |n| self.get_text(n))
             .map(|m| m.captures[0].node)
-            .map(get_text)
-            .map(|s| s.trim_matches('"').to_string())
-            .collect();
+            .map(|n| self.get_text(n))
+            .map(|s| s.trim_matches('"'))
+            .collect()
+    }
 
-        // Symbols
+    pub fn symbols(&self) -> Vec<Symbol> {
         let query = tree_sitter::Query::new(
             tree_sitter_proto::language(),
             "[
                 (message (message_name (identifier) @id))
                 (enum (enum_name (identifier) @id))
             ] @def",
-        )?;
+        )
+        .unwrap();
         let mut qc = tree_sitter::QueryCursor::new();
-        let symbols = qc
-            .matches(&query, tree.root_node(), get_text)
+        qc.matches(&query, self.tree.root_node(), |n| self.get_text(n))
             .map(|m| (m.captures[0].node, m.captures[1].node))
             .map(|(def, id)| Symbol {
                 kind: match def.kind() {
                     "message" => SymbolKind::Message,
                     _ => SymbolKind::Enum,
                 },
-                name: get_text(id).into(),
-                ancestors: ancestors(def, bytes),
+                name: self.get_text(id).into(),
+                ancestors: ancestors(def, self.text.as_bytes()),
                 range: def.range(),
             })
-            .collect();
-
-        Ok(File {
-            tree: tree.to_owned(),
-            text,
-            imports,
-            package,
-            symbols,
-        })
+            .collect()
     }
 
     fn is_import_completion(self: &Self, row: usize, col: usize) -> bool {
@@ -211,15 +206,15 @@ mod tests {
     fn test_package() {
         let text = r#"syntax="proto3"; package main;"#;
         let file = File::new(text.to_string()).unwrap();
-        assert_eq!(file.package, Some("main".into()));
+        assert_eq!(file.package(), Some("main".into()));
 
         let text = r#"syntax="proto3"; package main; package other"#;
         let file = File::new(text.to_string()).unwrap();
-        assert_eq!(file.package, Some("main".into()));
+        assert_eq!(file.package(), Some("main".into()));
 
         let text = r#"syntax="proto3";"#;
         let file = File::new(text.to_string()).unwrap();
-        assert_eq!(file.package, None);
+        assert_eq!(file.package(), None);
     }
 
     #[test]
@@ -232,7 +227,7 @@ mod tests {
             import "ba
         "#;
         let file = File::new(text.to_string()).unwrap();
-        assert_eq!(file.imports, vec!["foo.proto", "bar.proto"]);
+        assert_eq!(file.imports(), vec!["foo.proto", "bar.proto"]);
     }
 
     #[test]
@@ -248,7 +243,7 @@ mod tests {
         "#;
         let file = File::new(text.to_string()).unwrap();
         assert_eq!(
-            file.symbols,
+            file.symbols(),
             vec![
                 Symbol {
                     kind: SymbolKind::Message,

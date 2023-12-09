@@ -8,13 +8,13 @@ use lsp_types::request::{
 };
 use lsp_types::{notification::Initialized, request::Initialize, InitializedParams};
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionParams, Diagnostic, DiagnosticSeverity,
-    DidChangeTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    InitializeParams, Location, PartialResultParams, Position, PublishDiagnosticsParams, Range,
-    SymbolInformation, SymbolKind, TextDocumentContentChangeEvent, TextDocumentIdentifier,
-    TextDocumentItem, TextDocumentPositionParams, Url, WorkDoneProgressParams,
-    WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    ClientInfo, CompletionItem, CompletionItemKind, CompletionParams, Diagnostic,
+    DiagnosticSeverity, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
+    GotoDefinitionResponse, InitializeParams, Location, PartialResultParams, Position,
+    PublishDiagnosticsParams, Range, SymbolInformation, SymbolKind, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
+    WorkDoneProgressParams, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use pbls::Result;
 use pretty_assertions::assert_eq;
@@ -288,17 +288,8 @@ fn test_start_stop() -> pbls::Result<()> {
 fn test_open() -> pbls::Result<()> {
     let client = TestClient::new()?;
 
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: base_uri(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    let diags = client.recv::<PublishDiagnostics>()?;
     assert_eq!(
-        diags,
+        client.open(base_uri())?,
         PublishDiagnosticsParams {
             uri: base_uri(),
             diagnostics: vec![],
@@ -312,15 +303,7 @@ fn test_open() -> pbls::Result<()> {
 fn test_diagnostics_on_open() -> pbls::Result<()> {
     let client = TestClient::new()?;
 
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: error_uri(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    let diags = client.recv::<PublishDiagnostics>()?;
+    let diags = client.open(error_uri())?;
     assert_eq!(diags.uri, error_uri());
     assert_elements_equal(
         diags.diagnostics,
@@ -351,15 +334,7 @@ message Foo{}
 "#;
     std::fs::write(&path, text)?;
 
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: uri.clone(),
-            language_id: "".into(),
-            version: 0,
-            text: text.into(),
-        },
-    })?;
-    let diags = client.recv::<PublishDiagnostics>()?;
+    let diags = client.open(uri.clone())?;
     assert_eq!(
         diags,
         PublishDiagnosticsParams {
@@ -401,19 +376,8 @@ message Foo{Flob flob = 1;}
 #[test]
 fn test_no_diagnostics_on_open() -> pbls::Result<()> {
     let client = TestClient::new()?;
-
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: base_uri(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    let diags = client.recv::<PublishDiagnostics>()?;
-
     assert_eq!(
-        diags,
+        client.open(base_uri())?,
         PublishDiagnosticsParams {
             uri: base_uri(),
             diagnostics: vec![],
@@ -426,16 +390,7 @@ fn test_no_diagnostics_on_open() -> pbls::Result<()> {
 #[test]
 fn test_document_symbols() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
-
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: base_uri(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    client.recv::<PublishDiagnostics>()?;
+    client.open(base_uri())?;
 
     let Some(DocumentSymbolResponse::Flat(actual)) =
         client.request::<DocumentSymbolRequest>(DocumentSymbolParams {
@@ -469,16 +424,7 @@ fn test_document_symbols() -> pbls::Result<()> {
 #[test]
 fn test_workspace_symbols() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
-
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: base_uri(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    client.recv::<PublishDiagnostics>()?;
+    client.open(base_uri())?;
 
     let Some(WorkspaceSymbolResponse::Flat(actual)) =
         client.request::<WorkspaceSymbolRequest>(WorkspaceSymbolParams {
@@ -511,16 +457,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
 #[test]
 fn test_goto_definition_same_file() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
-
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: base_uri(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    client.recv::<PublishDiagnostics>()?;
+    client.open(base_uri())?;
 
     assert_eq!(
         client.request::<GotoDefinition>(goto(base_uri(), "Thing t =", 3))?,
@@ -544,16 +481,7 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
 #[test]
 fn test_goto_definition_same_file_nested() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
-
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: base_uri(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    client.recv::<PublishDiagnostics>()?;
+    client.open(base_uri())?;
 
     assert_eq!(
         client.request::<GotoDefinition>(goto(base_uri(), "Foo.Buz buz =", 6))?,
@@ -569,16 +497,7 @@ fn test_goto_definition_same_file_nested() -> pbls::Result<()> {
 #[test]
 fn test_goto_definition_different_file() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
-
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: base_uri().clone(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    client.recv::<PublishDiagnostics>()?;
+    client.open(base_uri())?;
 
     let resp = client.request::<GotoDefinition>(goto(base_uri(), "Dep d =", 0))?;
     assert_eq!(
@@ -595,16 +514,7 @@ fn test_goto_definition_different_file() -> pbls::Result<()> {
 #[test]
 fn test_goto_definition_different_file_nested() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
-
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: base_uri().clone(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    client.recv::<PublishDiagnostics>()?;
+    client.open(base_uri())?;
 
     let resp = client.request::<GotoDefinition>(goto(
         base_uri(),
@@ -625,16 +535,7 @@ fn test_goto_definition_different_file_nested() -> pbls::Result<()> {
 #[test]
 fn test_complete_import() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
-
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: base_uri().clone(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    client.recv::<PublishDiagnostics>()?;
+    client.open(base_uri())?;
 
     let text = vec![
         "syntax = \"proto3\";",
@@ -694,16 +595,7 @@ fn test_complete_import() -> pbls::Result<()> {
 #[test]
 fn test_complete_keyword() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
-
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: base_uri().clone(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    client.recv::<PublishDiagnostics>()?;
+    client.open(base_uri())?;
 
     // get completion on the line after "package"
     let loc = locate(base_uri(), "package main;");
@@ -890,17 +782,8 @@ fn test_import_discovery() -> pbls::Result<()> {
     let root_uri = Url::from_file_path(&tmp.path().join("root.proto")).unwrap();
     let client = TestClient::new_with_root(&tmp)?;
 
-    client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem {
-            uri: root_uri.clone(),
-            language_id: "".into(),
-            version: 0,
-            text: "".into(),
-        },
-    })?;
-    let diags = client.recv::<PublishDiagnostics>()?;
     assert_eq!(
-        diags,
+        client.open(root_uri.clone())?,
         PublishDiagnosticsParams {
             uri: root_uri,
             diagnostics: vec![],
