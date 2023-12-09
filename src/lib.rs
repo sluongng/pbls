@@ -101,6 +101,7 @@ fn handle_workspace_symbols(
     workspace: &mut workspace::Workspace,
     _: WorkspaceSymbolParams,
 ) -> Result<Option<lsp_types::WorkspaceSymbolResponse>> {
+    eprintln!("handle workspace");
     Ok(Some(lsp_types::WorkspaceSymbolResponse::Flat(
         workspace.all_symbols()?,
     )))

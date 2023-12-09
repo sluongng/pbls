@@ -49,9 +49,19 @@ impl Workspace {
     }
 
     pub fn all_symbols(&mut self) -> Result<Vec<SymbolInformation>> {
+        let paths = self
+            .proto_paths
+            .iter()
+            .filter_map(|p| std::fs::read_dir(p).ok())
+            .flatten()
+            .filter_map(|p| p.ok())
+            .map(|f| f.path())
+            .filter(|p| p.is_file() && p.extension().map_or(false, |e| e == "proto"))
+            .map(|p| std::fs::canonicalize(p));
         let mut res = vec![];
-        for path in &self.proto_paths {
-            let uri = Url::from_file_path(&path).or(Err(format!("Failed to open {path:?}")))?;
+        for path in paths {
+            let path = path?;
+            let uri = Url::from_file_path(&path).or(Err(format!("Invalid path: {path:?}")))?;
             let file = if let Some(file) = self.files.get(&uri) {
                 file
             } else {
@@ -60,7 +70,7 @@ impl Workspace {
                 self.files.insert(uri.clone(), file);
                 self.files.get(&uri).unwrap()
             };
-            let symbols = &file.symbols();
+            let symbols = file.symbols();
             let syms = symbols.iter().map(|s| to_lsp_symbol(uri.clone(), s));
             res.extend(syms);
         }

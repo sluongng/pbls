@@ -236,6 +236,9 @@ impl TestClient {
         {
             Message::Request(r) => Err(format!("Expected response, got: {r:?}"))?,
             Message::Notification(r) => Err(format!("Expected response, got: {r:?}"))?,
+            Message::Response(resp) if resp.error.is_some() => {
+                Err(format!("Got error response {:?}", resp))?
+            }
             Message::Response(resp) => Ok(serde_json::from_value(
                 resp.result.ok_or("Missing result from response")?,
             )?),
@@ -308,11 +311,11 @@ fn test_diagnostics_on_open() -> pbls::Result<()> {
     assert_elements_equal(
         diags.diagnostics,
         vec![
-            diag(error_uri(), "Thingy t =", "\"Thingy\" is not defined."),
+            diag(error_uri(), "Unknown t =", "\"Unknown\" is not defined."),
             diag(
                 error_uri(),
-                "int32 foo =",
-                "Field number 1 has already been used in \"main.Bar\" by field \"f\"",
+                "int32 bar =",
+                "Field number 1 has already been used in \"main.Noo\" by field \"foo\"",
             ),
         ],
         |s| s.message.clone(),
@@ -449,6 +452,9 @@ fn test_workspace_symbols() -> pbls::Result<()> {
         sym(base_uri(), None, "Bar", "message Bar"),
         sym(base_uri(), None, "Empty", "message Empty"),
         sym(other_uri(), Some("Other"), "Other.Nested", "message Nested"),
+        sym(error_uri(), None, "Nope", "enum Nope"),
+        sym(error_uri(), None, "Nah", "message Nah"),
+        sym(error_uri(), None, "Noo", "message Noo"),
     ];
     assert_elements_equal(actual, expected, |s| s.name.clone());
     Ok(())
