@@ -8,13 +8,13 @@ use lsp_types::request::{
 };
 use lsp_types::{notification::Initialized, request::Initialize, InitializedParams};
 use lsp_types::{
-    ClientInfo, CompletionItem, CompletionItemKind, CompletionParams, Diagnostic,
-    DiagnosticSeverity, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
-    GotoDefinitionResponse, InitializeParams, Location, PartialResultParams, Position,
-    PublishDiagnosticsParams, Range, SymbolInformation, SymbolKind, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
-    WorkDoneProgressParams, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    CompletionItem, CompletionItemKind, CompletionParams, Diagnostic, DiagnosticSeverity,
+    DidChangeTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    InitializeParams, Location, PartialResultParams, Position, PublishDiagnosticsParams, Range,
+    SymbolInformation, SymbolKind, TextDocumentContentChangeEvent, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, Url, WorkDoneProgressParams,
+    WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use pbls::Result;
 use pretty_assertions::assert_eq;
@@ -46,7 +46,7 @@ fn diag(uri: Url, target: &str, message: &str) -> Diagnostic {
     }
 }
 
-fn sym(uri: Url, pkg: &str, name: &str, text: &str) -> SymbolInformation {
+fn sym(uri: Url, parent: Option<&str>, name: &str, text: &str) -> SymbolInformation {
     let kind = text
         .split_once(" ")
         .unwrap_or_else(|| panic!("Invalid symbol {text}"))
@@ -63,7 +63,7 @@ fn sym(uri: Url, pkg: &str, name: &str, text: &str) -> SymbolInformation {
         tags: None,
         deprecated: None,
         location: locate(uri, text),
-        container_name: Some(pkg.into()),
+        container_name: parent.map(Into::into),
     }
 }
 
@@ -410,11 +410,11 @@ fn test_document_symbols() -> pbls::Result<()> {
     assert_elements_equal(
         actual,
         vec![
-            sym(base_uri(), "main", "Thing", "enum Thing"),
-            sym(base_uri(), "main", "Foo", "message Foo"),
-            sym(base_uri(), "main", "Foo.Buz", "message Buz"),
-            sym(base_uri(), "main", "Bar", "message Bar"),
-            sym(base_uri(), "main", "Empty", "message Empty"),
+            sym(base_uri(), None, "Thing", "enum Thing"),
+            sym(base_uri(), None, "Foo", "message Foo"),
+            sym(base_uri(), Some("Foo"), "Foo.Buz", "message Buz"),
+            sym(base_uri(), None, "Bar", "message Bar"),
+            sym(base_uri(), None, "Empty", "message Empty"),
         ],
         |s| s.name.clone(),
     );
@@ -440,15 +440,15 @@ fn test_workspace_symbols() -> pbls::Result<()> {
         panic!("Symbols response is not Flat")
     };
     let expected = vec![
-        sym(other_uri(), "other", "Other", "message Other"),
-        sym(dep_uri(), "main", "Dep", "message Dep"),
-        sym(dep_uri(), "main", "Dep2", "enum Dep2"),
-        sym(base_uri(), "main", "Thing", "enum Thing"),
-        sym(base_uri(), "main", "Foo", "message Foo"),
-        sym(base_uri(), "main", "Foo.Buz", "message Buz"),
-        sym(base_uri(), "main", "Bar", "message Bar"),
-        sym(base_uri(), "main", "Empty", "message Empty"),
-        sym(other_uri(), "other", "Other.Nested", "message Nested"),
+        sym(other_uri(), None, "Other", "message Other"),
+        sym(dep_uri(), None, "Dep", "message Dep"),
+        sym(dep_uri(), None, "Dep2", "enum Dep2"),
+        sym(base_uri(), None, "Thing", "enum Thing"),
+        sym(base_uri(), None, "Foo", "message Foo"),
+        sym(base_uri(), Some("Foo"), "Foo.Buz", "message Buz"),
+        sym(base_uri(), None, "Bar", "message Bar"),
+        sym(base_uri(), None, "Empty", "message Empty"),
+        sym(other_uri(), Some("Other"), "Other.Nested", "message Nested"),
     ];
     assert_elements_equal(actual, expected, |s| s.name.clone());
     Ok(())

@@ -50,13 +50,16 @@ impl Workspace {
 
     pub fn all_symbols(&mut self) -> Result<Vec<SymbolInformation>> {
         Ok(self
-            .parser
-            .parse_all()
+            .proto_paths
             .iter()
-            .flatten()
-            .filter_map(|r| match r {
-                (_, ParseResult::Syms(syms)) => Some(syms.to_owned()),
-                (_, ParseResult::Diags(_)) => None,
+            .map(|p| Url::from_file_path(p).unwrap())
+            .map(|p| match self.files.get(&p) {
+                Some(file) => file.symbols().iter().map(|s| to_lsp_symbol(p, s)).collect(),
+                None => match self.open(p.clone(), std::fs::read_to_string(p.path()).unwrap()) {
+                    Ok(ParseResult::Syms(syms)) => syms,
+                    Ok(ParseResult::Diags(_)) => vec![],
+                    Err(_) => vec![],
+                },
             })
             .flatten()
             .collect())
@@ -112,7 +115,11 @@ fn to_lsp_symbol(uri: Url, sym: &file::Symbol) -> lsp_types::SymbolInformation {
     // deprecated field is deprecated, but cannot be omitted
     #[allow(deprecated)]
     lsp_types::SymbolInformation {
-        name: sym.name.clone(),
+        name: if sym.ancestors.is_empty() {
+            sym.name.clone()
+        } else {
+            sym.ancestors.join(".") + "." + sym.name.as_str()
+        },
         kind: match sym.kind {
             file::SymbolKind::Enum => lsp_types::SymbolKind::ENUM,
             file::SymbolKind::Message => lsp_types::SymbolKind::STRUCT,
