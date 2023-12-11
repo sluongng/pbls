@@ -114,12 +114,44 @@ impl Workspace {
             .filter(|fname| fname.ends_with(".proto"))
             .filter(move |fname| !imports.contains(&fname.as_str())))
     }
+
+    pub fn definition(
+        self,
+        uri: Url,
+        pos: lsp_types::Position,
+    ) -> Result<Option<lsp_types::Location>> {
+        let file = self.get(&uri)?;
+
+        let Some(name) = file.type_at(pos.line.try_into()?, pos.character.try_into()?) else {
+            return Ok(None);
+        };
+
+        // First look within the file.
+        if let Some(sym) = file.symbols().iter().find(|s| s.name == name) {
+            return Ok(Some(lsp_types::Location {
+                uri,
+                range: to_lsp_range(sym.range),
+            }));
+        };
+
+        // Next look within the file imports.
+        // TODO: add all_proto_files iter?
+        // Or just try appending to each proto path until we find it?
+        file.imports().iter().map(|s| 
+    }
 }
 
 fn to_lsp_pos(p: tree_sitter::Point) -> lsp_types::Position {
     lsp_types::Position {
         line: p.row.try_into().unwrap(),
         character: p.column.try_into().unwrap(),
+    }
+}
+
+fn to_lsp_range(r: tree_sitter::Range) -> lsp_types::Range {
+    lsp_types::Range {
+        start: to_lsp_pos(r.start_point),
+        end: to_lsp_pos(r.end_point),
     }
 }
 
