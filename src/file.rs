@@ -144,6 +144,37 @@ impl File {
             Some(CompletionContext::Keyword)
         }
     }
+
+    pub fn type_at(self: &Self, row: usize, col: usize) -> Option<&str> {
+        let pos = tree_sitter::Point {
+            row: row.try_into().unwrap(),
+            column: col.try_into().unwrap(),
+        };
+        let node = self
+            .tree
+            .root_node()
+            .named_descendant_for_point_range(pos, pos)?;
+
+        eprintln!("Getting type at node: {node:?} parent: {:?}", node.parent());
+
+        if node.kind() == "message_or_enum_type" {
+            return Some(self.get_text(node));
+        }
+
+        if node.kind() != "identifier" {
+            return None;
+        }
+
+        let Some(parent) = node.parent() else {
+            return None;
+        };
+
+        if parent.kind() != "message_or_enum_type" {
+            return None;
+        }
+
+        Some(self.get_text(parent))
+    }
 }
 
 fn ancestors(node: tree_sitter::Node, text: &[u8]) -> Vec<String> {
@@ -343,6 +374,49 @@ mod tests {
                 Some(CompletionContext::Enum("Enum".into())),
                 Some(CompletionContext::Enum("Enum".into())),
                 Some(CompletionContext::Enum("Enum".into())),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_type_at() {
+        let (source, points) = cursors(
+            r#"
+            synt|ax = "proto3";
+
+            import "other|.proto";
+
+            message |Foo {
+                st|ring s = 1;
+                int|32 i = 2;
+                B|ar |b = 3;
+                Baz.|Buz b = |4;
+                foo.bar|.|Buz.Boz g = 5|;
+            }
+            "#,
+        );
+
+        assert_eq!(
+            points
+                .iter()
+                .map(|p| File::new(source.clone())
+                    .unwrap()
+                    .type_at(p.row, p.column)
+                    .map(str::to_string))
+                .collect::<Vec<Option<String>>>(),
+            vec![
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("Bar".to_string()),
+                None,
+                Some("Baz.Buz".to_string()),
+                None,
+                Some("foo.bar.Buz.Boz".to_string()),
+                Some("foo.bar.Buz.Boz".to_string()),
+                None,
             ]
         );
     }
