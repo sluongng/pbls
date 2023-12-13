@@ -112,41 +112,9 @@ fn handle_goto_definition(
     params: GotoDefinitionParams,
 ) -> Result<Option<GotoDefinitionResponse>> {
     let uri = params.text_document_position_params.text_document.uri;
-    let path = uri.path();
     let pos = params.text_document_position_params.position;
-
-    // Find the word under the cursor
-    let text = fs::read_to_string(uri.path())?;
-    let lineno: usize = pos.line.try_into()?;
-    let charno: usize = pos.character.try_into()?;
-    let line = text
-        .lines()
-        .skip(lineno)
-        .next()
-        .ok_or(format!("Line {lineno} out of range in file {path}"))?;
-    let fore = line[..charno]
-        .rfind(|c: char| c.is_whitespace())
-        .map(|n| n + 1)
-        .unwrap_or(0);
-    let aft = line[charno..]
-        .find(|c: char| c.is_whitespace())
-        .map(|n| n + charno)
-        .unwrap_or(line.len());
-    let name = &line[fore..aft];
-
-    let all = workspace.all_symbols()?;
-    let sym = all
-        .iter()
-        .find(|x| {
-            name == x.name
-                || match &x.container_name {
-                    Some(pkg) => name == pkg.to_owned() + "." + &x.name,
-                    None => false,
-                }
-        })
-        .ok_or(format!("Symbol for '{name}' not found"))?;
-
-    Ok(Some(GotoDefinitionResponse::Scalar(sym.location.clone())))
+    let loc = (*workspace).definition(uri, pos)?;
+    Ok(loc.map(GotoDefinitionResponse::Scalar))
 }
 
 fn handle_completion(

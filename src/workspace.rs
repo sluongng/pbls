@@ -117,7 +117,7 @@ impl Workspace {
     }
 
     pub fn definition(
-        self,
+        &self,
         uri: Url,
         pos: lsp_types::Position,
     ) -> Result<Option<lsp_types::Location>> {
