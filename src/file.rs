@@ -1,4 +1,11 @@
+use std::sync::OnceLock;
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+fn language() -> tree_sitter::Language {
+    static LANGUAGE: OnceLock<tree_sitter::Language> = OnceLock::new();
+    *LANGUAGE.get_or_init(|| tree_sitter_proto::language())
+}
 
 #[derive(Debug, PartialEq)]
 pub enum SymbolKind {
@@ -32,7 +39,7 @@ impl File {
         // TODO: cache parser/language?
         let mut parser = tree_sitter::Parser::new();
         parser
-            .set_language(tree_sitter_proto::language())
+            .set_language(language())
             .expect("Error loading proto language");
 
         let tree = parser.parse(&text, None).ok_or("Parse failed")?;
@@ -45,11 +52,11 @@ impl File {
     }
 
     pub fn package(&self) -> Option<&str> {
-        let query = tree_sitter::Query::new(
-            tree_sitter_proto::language(),
-            "(package (full_ident (identifier) @id))",
-        )
-        .unwrap();
+        static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
+        let query = QUERY.get_or_init(|| {
+            tree_sitter::Query::new(language(), "(package (full_ident (identifier) @id))").unwrap()
+        });
+
         let mut qc = tree_sitter::QueryCursor::new();
         let res = qc
             .matches(&query, self.tree.root_node(), |n| self.get_text(n))
@@ -60,29 +67,34 @@ impl File {
         res
     }
 
-    pub fn imports(&self) -> Vec<&str> {
-        let query = tree_sitter::Query::new(
-            tree_sitter_proto::language(),
-            "(import path: (string) @path)",
-        )
-        .unwrap();
-        let mut qc = tree_sitter::QueryCursor::new();
+    pub fn imports<'this: 'cursor, 'cursor>(
+        &'this self,
+        qc: &'cursor mut tree_sitter::QueryCursor,
+    ) -> impl Iterator<Item = &'this str> + 'cursor {
+        static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
+        let query = QUERY.get_or_init(|| {
+            tree_sitter::Query::new(language(), "(import path: (string) @path)").unwrap()
+        });
+
         qc.matches(&query, self.tree.root_node(), |n| self.get_text(n))
             .map(|m| m.captures[0].node)
             .map(|n| self.get_text(n))
             .map(|s| s.trim_matches('"'))
-            .collect()
     }
 
     pub fn symbols(&self) -> Vec<Symbol> {
-        let query = tree_sitter::Query::new(
-            tree_sitter_proto::language(),
-            "[
-                (message (message_name (identifier) @id))
-                (enum (enum_name (identifier) @id))
-            ] @def",
-        )
-        .unwrap();
+        static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
+        let query = QUERY.get_or_init(|| {
+            tree_sitter::Query::new(
+                language(),
+                "[
+                     (message (message_name (identifier) @id))
+                     (enum (enum_name (identifier) @id))
+                 ] @def",
+            )
+            .unwrap()
+        });
+
         let mut qc = tree_sitter::QueryCursor::new();
         qc.matches(&query, self.tree.root_node(), |n| self.get_text(n))
             .map(|m| (m.captures[0].node, m.captures[1].node))
@@ -258,7 +270,11 @@ mod tests {
             import "ba
         "#;
         let file = File::new(text.to_string()).unwrap();
-        assert_eq!(file.imports(), vec!["foo.proto", "bar.proto"]);
+        let mut qc = tree_sitter::QueryCursor::new();
+        assert_eq!(
+            file.imports(&mut qc).collect::<Vec<_>>(),
+            vec!["foo.proto", "bar.proto"]
+        );
     }
 
     #[test]

@@ -100,7 +100,8 @@ impl Workspace {
             .file_name()
             .ok_or("Invalid path: {uri}")?;
         let file = self.files.get(uri).ok_or("File not loaded: {uri}")?;
-        let imports = file.imports();
+        let mut qc = tree_sitter::QueryCursor::new();
+        let imports = file.imports(&mut qc).collect::<Vec<_>>();
         Ok(self
             .proto_paths
             .iter()
@@ -137,7 +138,8 @@ impl Workspace {
         // Next look within the file imports.
         // TODO: add all_proto_files iter?
         // Or just try appending to each proto path until we find it?
-        file.imports().iter().map(|s| 
+        // file.imports().iter().map(|s|
+        Ok(None)
     }
 }
 
