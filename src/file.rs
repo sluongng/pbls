@@ -17,8 +17,16 @@ pub enum SymbolKind {
 pub struct Symbol {
     pub kind: SymbolKind,
     pub name: String,
-    pub ancestors: Vec<String>,
+    pub parent: Option<String>,
     pub range: tree_sitter::Range,
+}
+
+impl Symbol {
+    pub fn full_name(&self) -> String {
+        self.parent.as_ref().map_or(self.name.clone(), |p| {
+            p.to_string() + "." + self.name.as_str()
+        })
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -36,7 +44,6 @@ pub struct File {
 
 impl File {
     pub fn new(text: String) -> Result<File> {
-        // TODO: cache parser/language?
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(language())
@@ -104,7 +111,7 @@ impl File {
                     _ => SymbolKind::Enum,
                 },
                 name: self.get_text(id).into(),
-                ancestors: ancestors(def, self.text.as_bytes()),
+                parent: parent_name(def, self.text.as_bytes()),
                 range: def.range(),
             })
             .collect()
@@ -189,7 +196,7 @@ impl File {
     }
 }
 
-fn ancestors(node: tree_sitter::Node, text: &[u8]) -> Vec<String> {
+fn parent_name(node: tree_sitter::Node, text: &[u8]) -> Option<String> {
     let mut node = node;
     let mut res = Vec::<String>::new();
     loop {
@@ -202,7 +209,11 @@ fn ancestors(node: tree_sitter::Node, text: &[u8]) -> Vec<String> {
             break;
         }
     }
-    res
+    if res.is_empty() {
+        None
+    } else {
+        Some(res.join("."))
+    }
 }
 
 // Get the name of a Enum or Message node.
@@ -295,7 +306,7 @@ mod tests {
                 Symbol {
                     kind: SymbolKind::Message,
                     name: "Foo".into(),
-                    ancestors: vec![],
+                    parent: None,
                     range: tree_sitter::Range {
                         start_byte: 69,
                         end_byte: 82,
@@ -306,7 +317,7 @@ mod tests {
                 Symbol {
                     kind: SymbolKind::Enum,
                     name: "Bar".into(),
-                    ancestors: vec![],
+                    parent: None,
                     range: tree_sitter::Range {
                         start_byte: 95,
                         end_byte: 105,
@@ -317,7 +328,7 @@ mod tests {
                 Symbol {
                     kind: SymbolKind::Message,
                     name: "Baz".into(),
-                    ancestors: vec![],
+                    parent: None,
                     range: tree_sitter::Range {
                         start_byte: 118,
                         end_byte: 174,
@@ -328,7 +339,7 @@ mod tests {
                 Symbol {
                     kind: SymbolKind::Message,
                     name: "Biz".into(),
-                    ancestors: vec!["Baz".into()],
+                    parent: Some("Baz".into()),
                     range: tree_sitter::Range {
                         start_byte: 147,
                         end_byte: 160,

@@ -1,3 +1,5 @@
+use std::collections::hash_map;
+
 use crate::file;
 
 use super::parser::{ParseResult, Parser};
@@ -16,7 +18,7 @@ impl Workspace {
         Workspace {
             proto_paths: proto_paths.clone(),
             parser: Parser::new(proto_paths),
-            files: std::collections::HashMap::new(),
+            files: hash_map::HashMap::new(),
         }
     }
 
@@ -24,19 +26,54 @@ impl Workspace {
         Ok(self.files.get(uri).ok_or("File not loaded: {uri}")?)
     }
 
+    fn find_import(&self, name: &str) -> Option<std::path::PathBuf> {
+        self.proto_paths
+            .iter()
+            .map(|dir| dir.join(name))
+            .find(|path| path.exists())
+    }
+
+    // Open and parse an imported file if we haven't already
+    fn open_import(&mut self, name: &str) -> Result<()> {
+        let Some(path) = self.find_import(name) else {
+            // TODO: Could generate not-found import diagnostic here, if we stop using protoc
+            return Ok(());
+        };
+
+        let uri = Url::from_file_path(path.clone()).unwrap();
+        if self.files.contains_key(&uri) {
+            return Ok(()); // already parsed
+        };
+
+        let text = std::fs::read_to_string(path)?;
+        let file = file::File::new(text)?;
+        let mut qc = tree_sitter::QueryCursor::new();
+        for import in file.imports(&mut qc) {
+            self.open_import(import)?;
+        }
+        self.files.insert(uri, file);
+        Ok(())
+    }
+
     pub fn open(&mut self, uri: Url, text: String) -> Result<ParseResult> {
-        self.files.insert(uri.clone(), file::File::new(text)?);
+        let file = file::File::new(text)?;
+
+        let mut qc = tree_sitter::QueryCursor::new();
+
+        for import in file.imports(&mut qc) {
+            self.open_import(import)?;
+        }
+
+        self.files.insert(uri.clone(), file);
         self.parser.reparse(uri)
     }
 
     pub fn save(&mut self, uri: Url, text: String) -> Result<ParseResult> {
-        self.files.insert(uri.clone(), file::File::new(text)?);
-        self.parser.reparse(uri)
+        self.open(uri, text)
     }
 
     pub fn edit(&mut self, uri: &Url, text: String) -> Result<ParseResult> {
-        self.files.insert(uri.clone(), file::File::new(text)?);
-        self.parser.reparse(uri.clone())
+        self.open(uri.clone(), text)
     }
 
     pub fn symbols(&mut self, uri: Url) -> Result<Vec<SymbolInformation>> {
@@ -127,8 +164,10 @@ impl Workspace {
             return Ok(None);
         };
 
+        eprintln!("Getting definition for {name}");
+
         // First look within the file.
-        if let Some(sym) = file.symbols().iter().find(|s| s.name == name) {
+        if let Some(sym) = file.symbols().iter().find(|s| s.full_name() == name) {
             return Ok(Some(lsp_types::Location {
                 uri,
                 range: to_lsp_range(sym.range),
@@ -136,9 +175,38 @@ impl Workspace {
         };
 
         // Next look within the file imports.
-        // TODO: add all_proto_files iter?
-        // Or just try appending to each proto path until we find it?
-        // file.imports().iter().map(|s|
+        let mut qc = tree_sitter::QueryCursor::new();
+        let imports = file
+            .imports(&mut qc)
+            .filter_map(|name| self.find_import(name))
+            .map(|path| Url::from_file_path(path).unwrap())
+            .map(|uri| (uri.clone(), self.get(&uri).unwrap()));
+
+        let local_package = file.package();
+        for (uri, file) in imports {
+            let package = file.package();
+            let expected_name = if package == local_package {
+                name.to_string()
+            } else if let Some(package) = package {
+                name.strip_prefix(package)
+                    .unwrap_or(name)
+                    .strip_prefix(".")
+                    .unwrap_or(name)
+                    .to_string()
+            } else {
+                name.to_string()
+            };
+            if let Some(sym) = file
+                .symbols()
+                .iter()
+                .find(|sym| sym.full_name() == expected_name)
+            {
+                return Ok(Some(lsp_types::Location {
+                    uri,
+                    range: to_lsp_range(sym.range),
+                }));
+            }
+        }
         Ok(None)
     }
 }
@@ -161,11 +229,7 @@ fn to_lsp_symbol(uri: Url, sym: &file::Symbol) -> lsp_types::SymbolInformation {
     // deprecated field is deprecated, but cannot be omitted
     #[allow(deprecated)]
     lsp_types::SymbolInformation {
-        name: if sym.ancestors.is_empty() {
-            sym.name.clone()
-        } else {
-            sym.ancestors.join(".") + "." + sym.name.as_str()
-        },
+        name: sym.full_name(),
         kind: match sym.kind {
             file::SymbolKind::Enum => lsp_types::SymbolKind::ENUM,
             file::SymbolKind::Message => lsp_types::SymbolKind::STRUCT,
@@ -179,10 +243,6 @@ fn to_lsp_symbol(uri: Url, sym: &file::Symbol) -> lsp_types::SymbolInformation {
                 end: to_lsp_pos(sym.range.end_point),
             },
         },
-        container_name: if sym.ancestors.is_empty() {
-            None
-        } else {
-            Some(sym.ancestors.join("."))
-        },
+        container_name: sym.parent.clone(),
     }
 }
