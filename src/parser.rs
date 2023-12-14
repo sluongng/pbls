@@ -1,27 +1,12 @@
 use std::{collections::HashMap, error::Error};
 
-use lsp_types::{
-    Diagnostic, DiagnosticSeverity, Location, Position, Range, SymbolInformation, SymbolKind, Url,
-};
-use protobuf::descriptor::{source_code_info, DescriptorProto, FileDescriptorProto};
-
-// Field numbers from https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L100-L101
-const MESSAGE_TYPE: i32 = 4;
-const ENUM_TYPE: i32 = 5;
-const NESTED_MESSAGE_TYPE: i32 = 3;
-const NESTED_ENUM_TYPE: i32 = 4;
+use lsp_types::{Diagnostic, DiagnosticSeverity, Range, Url};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-#[derive(Clone)]
-pub enum ParseResult {
-    Syms(Vec<SymbolInformation>),
-    Diags(Vec<Diagnostic>),
-}
-
 pub struct Parser {
     proto_paths: Vec<std::path::PathBuf>,
-    files: HashMap<Url, ParseResult>,
+    files: HashMap<Url, Vec<Diagnostic>>,
 }
 
 impl Parser {
@@ -36,7 +21,7 @@ impl Parser {
     // Returns a list of symbols if the file parsed.
     // Returns a list of diagnostics if the file failed to parse.
     // Either way, the result is cached for re-access via `parse`.
-    pub fn reparse(&mut self, uri: Url) -> Result<ParseResult> {
+    pub fn reparse(&mut self, uri: Url) -> Result<Vec<Diagnostic>> {
         if uri.scheme() != "file" {
             Err(format!("Unsupported URI scheme {uri}"))?;
         }
@@ -48,7 +33,6 @@ impl Parser {
         let mut parser = protobuf_parse::Parser::new();
         // The protoc parser gives more useful and consistent error messages
         parser.protoc();
-        parser.protoc_extra_args(vec!["--include_source_info"]);
         parser.capture_stderr();
         parser.input(&path);
         parser.includes(
@@ -58,17 +42,12 @@ impl Parser {
         );
 
         let result = match parser.file_descriptor_set() {
-            Ok(fds) => ParseResult::Syms(get_symbols(
-                uri.clone(),
-                fds.file
-                    .first()
-                    .ok_or(format!("No results parsing {uri}"))?,
-            )),
-            Err(err) => ParseResult::Diags(get_diagnostics(
+            Ok(_) => vec![],
+            Err(err) => get_diagnostics(
                 err.source()
                     .ok_or(format!("Parse error missing source: {err}"))?,
                 std::fs::read_to_string(path)?,
-            )),
+            ),
         };
 
         self.files.insert(uri, result.clone());
@@ -82,14 +61,6 @@ fn get_diagnostics(err: impl Error, file_contents: String) -> Vec<Diagnostic> {
     err.to_string()
         .split("\\n")
         .filter_map(|l| parse_diag(l, &file_contents))
-        .collect()
-}
-
-fn get_symbols(uri: Url, fd: &FileDescriptorProto) -> Vec<SymbolInformation> {
-    fd.source_code_info
-        .location
-        .iter()
-        .filter_map(|loc| location_to_symbol(uri.clone(), loc, fd))
         .collect()
 }
 
@@ -129,122 +100,5 @@ fn parse_diag(diag: &str, file_contents: &String) -> Option<lsp_types::Diagnosti
         source: Some(String::from("pbls")),
         message: msg.trim().into(),
         ..Default::default()
-    })
-}
-
-fn location_to_name_kind_nested(
-    path: &[i32],
-    proto: &DescriptorProto,
-) -> Option<(String, SymbolKind)> {
-    match path {
-        [NESTED_ENUM_TYPE, idx] => Some((
-            proto
-                .enum_type
-                .get(usize::try_from(*idx).ok()?)?
-                .name
-                .clone()
-                .unwrap_or("<EnumMissingName>".into()),
-            SymbolKind::ENUM,
-        )),
-        [NESTED_MESSAGE_TYPE, idx] => Some((
-            proto
-                .nested_type
-                .get(usize::try_from(*idx).ok()?)?
-                .name
-                .clone()?,
-            SymbolKind::STRUCT,
-        )),
-        [NESTED_MESSAGE_TYPE, idx, tail @ ..] => {
-            let parent_name = proto
-                .nested_type
-                .get(usize::try_from(*idx).ok()?)?
-                .name
-                .clone()
-                .unwrap_or("<MessageMissingName>".into());
-            let (name, kind) = location_to_name_kind_nested(
-                tail,
-                proto.nested_type.get(usize::try_from(*idx).ok()?)?,
-            )?;
-            Some((parent_name + "." + &name, kind))
-        }
-        _ => None,
-    }
-}
-fn location_to_name_kind(path: &[i32], fd: &FileDescriptorProto) -> Option<(String, SymbolKind)> {
-    match path {
-        // top-level enum
-        [ENUM_TYPE, idx] => Some((
-            fd.enum_type
-                .get(usize::try_from(*idx).ok()?)?
-                .name
-                .clone()
-                .unwrap_or("<EnumMissingName>".into()),
-            SymbolKind::ENUM,
-        )),
-        // top-level message
-        [MESSAGE_TYPE, idx] => Some((
-            fd.message_type
-                .get(usize::try_from(*idx).ok()?)?
-                .name
-                .clone()
-                .unwrap_or("<MessageMissingName>".into()),
-            SymbolKind::STRUCT,
-        )),
-        // nested type
-        [MESSAGE_TYPE, idx, tail @ ..] => {
-            let parent_name = fd
-                .message_type
-                .get(usize::try_from(*idx).ok()?)?
-                .name
-                .clone()
-                .unwrap_or("<MessageMissingName>".into());
-            let (name, kind) = location_to_name_kind_nested(
-                &tail,
-                fd.message_type.get(usize::try_from(*idx).ok()?)?,
-            )?;
-            Some((parent_name + "." + &name, kind))
-        }
-        _ => None,
-    }
-}
-
-fn location_to_symbol(
-    uri: Url,
-    loc: &source_code_info::Location,
-    fd: &FileDescriptorProto,
-) -> Option<SymbolInformation> {
-    // See https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/descriptor.proto#L1097-L1120
-    // The first element is the type, followed by the index of that type in the descriptor.
-    let (name, kind) = location_to_name_kind(&loc.path[..], fd)?;
-
-    // Always has exactly three or four elements: start line, start column,
-    // end line (optional, otherwise assumed same as start line), end column.
-    let (start_line, start_col, end_line, end_col) = match loc.span[..] {
-        [start_line, start_col, end_line, end_col] => (start_line, start_col, end_line, end_col),
-        [start_line, start_col, end_col] => (start_line, start_col, start_line, end_col),
-        _ => None?,
-    };
-
-    let start = Position {
-        line: start_line.try_into().unwrap(),
-        character: start_col.try_into().unwrap(),
-    };
-    let end = Position {
-        line: end_line.try_into().unwrap(),
-        character: end_col.try_into().unwrap(),
-    };
-
-    // deprecated field is deprecated, but cannot be omitted
-    #[allow(deprecated)]
-    Some(SymbolInformation {
-        name,
-        kind,
-        location: Location {
-            uri: uri.clone(),
-            range: Range { start, end },
-        },
-        container_name: fd.package.clone(),
-        tags: None,
-        deprecated: None,
     })
 }

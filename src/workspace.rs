@@ -2,7 +2,7 @@ use std::collections::hash_map;
 
 use crate::file;
 
-use super::parser::{ParseResult, Parser};
+use super::parser::Parser;
 use lsp_types::{SymbolInformation, Url};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -55,7 +55,7 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn open(&mut self, uri: Url, text: String) -> Result<ParseResult> {
+    pub fn open(&mut self, uri: Url, text: String) -> Result<Vec<lsp_types::Diagnostic>> {
         let file = file::File::new(text)?;
 
         let mut qc = tree_sitter::QueryCursor::new();
@@ -68,11 +68,11 @@ impl Workspace {
         self.parser.reparse(uri)
     }
 
-    pub fn save(&mut self, uri: Url, text: String) -> Result<ParseResult> {
+    pub fn save(&mut self, uri: Url, text: String) -> Result<Vec<lsp_types::Diagnostic>> {
         self.open(uri, text)
     }
 
-    pub fn edit(&mut self, uri: &Url, text: String) -> Result<ParseResult> {
+    pub fn edit(&mut self, uri: &Url, text: String) -> Result<Vec<lsp_types::Diagnostic>> {
         self.open(uri.clone(), text)
     }
 

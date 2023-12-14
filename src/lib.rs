@@ -11,14 +11,13 @@ use lsp_types::DidChangeTextDocumentParams;
 use lsp_types::SaveOptions;
 use lsp_types::SymbolKind;
 use lsp_types::TextDocumentSyncKind;
-use parser::ParseResult;
 
 use lsp_server::{Connection, Message};
 use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Request, WorkspaceSymbolRequest};
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
-    Diagnostic, DiagnosticServerCapabilities, InitializeParams, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncOptions, TextDocumentSyncSaveOptions,
+    DiagnosticServerCapabilities, InitializeParams, ServerCapabilities, TextDocumentSyncCapability,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions,
 };
 use lsp_types::{
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentSymbolParams,
@@ -188,10 +187,7 @@ fn notify_did_open(
     params: DidOpenTextDocumentParams,
 ) -> Result<Option<lsp_server::Notification>> {
     let uri = params.text_document.uri;
-    let diags = match workspace.open(uri.clone(), params.text_document.text)? {
-        ParseResult::Syms(_) => Vec::<Diagnostic>::new(),
-        ParseResult::Diags(diags) => diags,
-    };
+    let diags = workspace.open(uri.clone(), params.text_document.text)?;
 
     let params = lsp_types::PublishDiagnosticsParams {
         uri,
@@ -210,13 +206,10 @@ fn notify_did_save(
     params: DidSaveTextDocumentParams,
 ) -> Result<Option<lsp_server::Notification>> {
     let uri = params.text_document.uri;
-    let diags = match workspace.save(
+    let diags = workspace.save(
         uri.clone(),
         params.text.ok_or("Save notification missing text")?,
-    )? {
-        ParseResult::Syms(_) => Vec::<Diagnostic>::new(),
-        ParseResult::Diags(diags) => diags,
-    };
+    )?;
 
     let params = lsp_types::PublishDiagnosticsParams {
         uri,
