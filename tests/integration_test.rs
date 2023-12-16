@@ -78,7 +78,7 @@ fn goto(uri: Url, text: &str, column: u32) -> GotoDefinitionParams {
         .next()
         .unwrap_or_else(|| panic!("{text} not found in {uri}"));
 
-    let character = line.find(|c: char| !c.is_whitespace()).unwrap_or(0);
+    let character = line.find(text).unwrap_or(0);
     GotoDefinitionParams {
         work_done_progress_params: lsp_types::WorkDoneProgressParams {
             work_done_token: None,
@@ -457,6 +457,30 @@ fn test_workspace_symbols() -> pbls::Result<()> {
         sym(error_uri(), None, "Noo", "message Noo"),
     ];
     assert_elements_equal(actual, expected, |s| s.name.clone());
+    Ok(())
+}
+
+#[test]
+fn test_goto_import() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+    client.open(base_uri())?;
+
+    assert_eq!(
+        client.request::<GotoDefinition>(goto(base_uri(), "\"dep.proto\"", 3))?,
+        Some(GotoDefinitionResponse::Scalar(lsp_types::Location {
+            uri: dep_uri(),
+            range: lsp_types::Range::default(),
+        }))
+    );
+
+    assert_eq!(
+        client.request::<GotoDefinition>(goto(base_uri(), "\"other.proto\"", 6))?,
+        Some(GotoDefinitionResponse::Scalar(lsp_types::Location {
+            uri: other_uri(),
+            range: lsp_types::Range::default(),
+        }))
+    );
+
     Ok(())
 }
 

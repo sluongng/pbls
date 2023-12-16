@@ -37,6 +37,12 @@ pub enum CompletionContext {
     Keyword,
 }
 
+#[derive(Debug, PartialEq)]
+pub enum GotoContext<'a> {
+    Type(&'a str),
+    Import(&'a str),
+}
+
 pub struct File {
     tree: tree_sitter::Tree,
     text: String,
@@ -164,7 +170,7 @@ impl File {
         }
     }
 
-    pub fn type_at(self: &Self, row: usize, col: usize) -> Option<&str> {
+    pub fn type_at(self: &Self, row: usize, col: usize) -> Option<GotoContext> {
         let pos = tree_sitter::Point {
             row: row.try_into().unwrap(),
             column: col.try_into().unwrap(),
@@ -176,8 +182,12 @@ impl File {
 
         eprintln!("Getting type at node: {node:?} parent: {:?}", node.parent());
 
+        if node.kind() == "string" && node.parent().is_some_and(|p| p.kind() == "import") {
+            return Some(GotoContext::Import(self.get_text(node).trim_matches('"')));
+        }
+
         if node.kind() == "message_or_enum_type" {
-            return Some(self.get_text(node));
+            return Some(GotoContext::Type(self.get_text(node)));
         }
 
         if node.kind() != "identifier" {
@@ -192,7 +202,7 @@ impl File {
             return None;
         }
 
-        Some(self.get_text(parent))
+        Some(GotoContext::Type(self.get_text(parent)))
     }
 }
 
@@ -423,26 +433,28 @@ mod tests {
             "#,
         );
 
+        let files = points
+            .iter()
+            .map(|p| (p, File::new(source.clone()).unwrap()))
+            .collect::<Vec<_>>();
+
         assert_eq!(
-            points
+            files
                 .iter()
-                .map(|p| File::new(source.clone())
-                    .unwrap()
-                    .type_at(p.row, p.column)
-                    .map(str::to_string))
-                .collect::<Vec<Option<String>>>(),
+                .map(|(p, f)| f.type_at(p.row, p.column))
+                .collect::<Vec<Option<GotoContext>>>(),
             vec![
                 None,
+                Some(GotoContext::Import("other.proto")),
                 None,
                 None,
                 None,
+                Some(GotoContext::Type("Bar")),
                 None,
-                Some("Bar".to_string()),
+                Some(GotoContext::Type("Baz.Buz")),
                 None,
-                Some("Baz.Buz".to_string()),
-                None,
-                Some("foo.bar.Buz.Boz".to_string()),
-                Some("foo.bar.Buz.Boz".to_string()),
+                Some(GotoContext::Type("foo.bar.Buz.Boz")),
+                Some(GotoContext::Type("foo.bar.Buz.Boz")),
                 None,
             ]
         );

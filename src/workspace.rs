@@ -159,13 +159,27 @@ impl Workspace {
         pos: lsp_types::Position,
     ) -> Result<Option<lsp_types::Location>> {
         let file = self.get(&uri)?;
+        let ctx = file.type_at(pos.line.try_into()?, pos.character.try_into()?);
+        eprintln!("Finding definition for {ctx:?}");
+        match ctx {
+            None => Ok(None),
+            Some(file::GotoContext::Type(name)) => self.find_symbol(uri, file, name),
+            Some(file::GotoContext::Import(name)) => {
+                eprintln!("Looking up import {name:?}");
+                Ok(self.find_import(name).map(|path| lsp_types::Location {
+                    uri: Url::from_file_path(path).unwrap(),
+                    range: lsp_types::Range::default(),
+                }))
+            }
+        }
+    }
 
-        let Some(name) = file.type_at(pos.line.try_into()?, pos.character.try_into()?) else {
-            return Ok(None);
-        };
-
-        eprintln!("Getting definition for {name}");
-
+    fn find_symbol(
+        &self,
+        uri: Url,
+        file: &file::File,
+        name: &str,
+    ) -> Result<Option<lsp_types::Location>> {
         // First look within the file.
         if let Some(sym) = file.symbols().iter().find(|s| s.full_name() == name) {
             return Ok(Some(lsp_types::Location {
