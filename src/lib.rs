@@ -1,6 +1,8 @@
 mod file;
+mod logger;
 mod parser;
 mod workspace;
+
 use lsp_types::notification::DidChangeTextDocument;
 use lsp_types::request::Completion;
 use lsp_types::CompletionItem;
@@ -238,6 +240,7 @@ fn notify_did_change(
 
     Ok(None)
 }
+
 fn has_proto_files(path: impl AsRef<std::path::Path>) -> Result<bool> {
     Ok(std::fs::read_dir(path)?
         .find(|x| match x {
@@ -273,7 +276,8 @@ fn find_import_paths(root: std::path::PathBuf) -> Result<Vec<std::path::PathBuf>
         .collect())
 }
 
-pub fn run(connection: Connection) -> Result<()> {
+pub fn run(connection: Connection, loglevel: log::Level) -> Result<()> {
+    logger::init(loglevel);
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
@@ -306,7 +310,6 @@ pub fn run(connection: Connection) -> Result<()> {
 
     eprintln!("Initializing");
     let init_params = connection.initialize(server_capabilities)?;
-    eprintln!("Initialized");
     let params: InitializeParams = serde_json::from_value(init_params).unwrap();
     let root = params
         .root_uri
