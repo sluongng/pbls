@@ -200,19 +200,7 @@ impl File {
             }
         }
 
-        if node.kind() != "ident" {
-            return None;
-        }
-
-        let Some(parent) = node.parent() else {
-            return None;
-        };
-
-        if parent.kind() != "message_or_enum_type" {
-            return None;
-        }
-
-        Some(GotoContext::Type(self.get_text(parent)))
+        None
     }
 }
 

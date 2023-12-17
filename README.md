@@ -6,10 +6,14 @@
 
 - [x] Diagnostics
 - [x] Goto Definition
+  - [x] Field Type
+  - [x] Import
 - [x] Document Symbols
 - [x] Workspace Symbols
 - [ ] Completion (WIP)
-- [ ] Hover
+  - [x] Keyword
+  - [x] Import
+  - [x] Field Type
 - [ ] Find References
 
 # Prerequisites
@@ -30,14 +34,13 @@ None yet. If you package `pbls` for the distro of your choice, let me know!
 
 # Configuration
 
-`pbls` does not require any configuration.
-`pbls` automatically adds every folder in the workspace containing a protobuf file to the import path.
-If you need specific import paths for a project, create a ".pbls.toml" file at the workspace root:
+Create a file named ".pbls.toml" at your workspace root, and specify the proto import paths that are passed to the `-I`/`--proto_path` flag of `protoc`.
 
 ```toml
-# .pbls.toml
 proto_paths=["one", "two/three"]
 ```
+
+If this is omitted, `pbls` will automatically add every folder in the workspace containing a protobuf file to the import path. This will not work properly when proto files specify imports containing directories, like `import "foo/bar.proto"`.
 
 # Editor Setup
 
