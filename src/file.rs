@@ -124,13 +124,14 @@ impl File {
     }
 
     fn is_import_completion(self: &Self, row: usize, col: usize) -> bool {
+        eprintln!("Is import {row} {col}");
         col > "import ".len()
             && self
                 .text
                 .lines()
                 .skip(row)
                 .next()
-                .map_or(false, |line| line.starts_with("import "))
+                .map_or(false, |line| line.trim_start().starts_with("import "))
     }
 
     fn parent_context(&self, node: Option<tree_sitter::Node>) -> Option<CompletionContext> {
@@ -264,6 +265,16 @@ mod tests {
             })
             .collect();
         (res, cursors)
+    }
+
+    // Takes a string with one '|' characters representing a cursor.
+    // Returns the string with '|' removed, and the position of the cursor.
+    fn cursor(text: &str) -> (File, tree_sitter::Point) {
+        let (text, cursors) = cursors(text);
+        (
+            File::new(text).unwrap(),
+            cursors.first().unwrap().to_owned(),
+        )
     }
 
     #[test]
@@ -402,7 +413,7 @@ mod tests {
                 .collect::<Vec<Option<CompletionContext>>>(),
             vec![
                 Some(CompletionContext::Keyword),
-                Some(CompletionContext::Keyword),
+                Some(CompletionContext::Import),
                 Some(CompletionContext::Keyword),
                 Some(CompletionContext::Message("Foo".into())),
                 Some(CompletionContext::Message("Buz".into())),
@@ -412,6 +423,21 @@ mod tests {
                 Some(CompletionContext::Enum("Enum".into())),
                 Some(CompletionContext::Enum("Enum".into())),
             ]
+        );
+    }
+
+    #[test]
+    fn test_completion_context_import() {
+        let (file, pos) = cursor(
+            r#"
+            syntax = "proto3";
+            import |
+            "#,
+        );
+
+        assert_eq!(
+            file.completion_context(pos.row, pos.column),
+            Some(CompletionContext::Import)
         );
     }
 
