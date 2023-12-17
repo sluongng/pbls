@@ -76,7 +76,7 @@ impl Workspace {
         self.open(uri.clone(), text)
     }
 
-    pub fn symbols(&mut self, uri: Url) -> Result<Vec<SymbolInformation>> {
+    pub fn symbols(&self, uri: Url) -> Result<Vec<SymbolInformation>> {
         Ok(self
             .get(&uri)?
             .symbols()
