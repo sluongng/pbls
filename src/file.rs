@@ -56,7 +56,7 @@ impl File {
             .expect("Error loading proto language");
 
         let tree = parser.parse(&text, None).ok_or("Parse failed")?;
-        eprintln!("Parsed: {}", tree.root_node().to_sexp());
+        log::trace!("Parsed: {}", tree.root_node().to_sexp());
         Ok(File { tree, text })
     }
 
@@ -123,19 +123,8 @@ impl File {
             .collect()
     }
 
-    fn is_import_completion(self: &Self, row: usize, col: usize) -> bool {
-        eprintln!("Is import {row} {col}");
-        col > "import ".len()
-            && self
-                .text
-                .lines()
-                .skip(row)
-                .next()
-                .map_or(false, |line| line.trim_start().starts_with("import "))
-    }
-
     fn parent_context(&self, node: Option<tree_sitter::Node>) -> Option<CompletionContext> {
-        eprintln!("Check parent {node:?}");
+        log::trace!("Checking parent context: {node:?}");
         match node {
             None => None,
             Some(n) if n.kind() == "enum_body" => n
@@ -153,19 +142,24 @@ impl File {
     pub fn completion_context(self: &Self, row: usize, col: usize) -> Option<CompletionContext> {
         let pos = tree_sitter::Point {
             row: row.try_into().unwrap(),
-            column: col.try_into().unwrap(),
+            column: (col).try_into().unwrap(),
         };
         let node = self
             .tree
             .root_node()
             .named_descendant_for_point_range(pos, pos)?;
 
-        eprintln!("Completion {node:?}: {}", node.to_sexp());
+        log::debug!(
+            "Getting completion context for {node:?}: {:?}",
+            node.prev_sibling()
+        );
 
-        if let Some(parent) = self.parent_context(Some(node)) {
-            Some(parent)
-        } else if self.is_import_completion(row, col) {
+        // let line = self.text.lines().skip(row).next().unwrap();
+
+        if node.prev_sibling().is_some_and(|s| s.kind() == "import") {
             Some(CompletionContext::Import)
+        } else if let Some(parent) = self.parent_context(Some(node)) {
+            Some(parent)
         } else {
             Some(CompletionContext::Keyword)
         }
@@ -181,7 +175,7 @@ impl File {
             .root_node()
             .named_descendant_for_point_range(pos, pos)?;
 
-        eprintln!("Getting type at node: {node:?} parent: {:?}", node.parent());
+        log::debug!("Getting type at node: {node:?} parent: {:?}", node.parent());
 
         if node.kind() == "string" && node.parent().is_some_and(|p| p.kind() == "import") {
             return Some(GotoContext::Import(self.get_text(node).trim_matches('"')));
@@ -247,9 +241,8 @@ mod tests {
     use super::*;
 
     // Takes a string with '|' characters representing cursors.
-    // Returns the string with '|' removed, and the positions of the cursors.
-    fn cursors(text: &str) -> (String, Vec<tree_sitter::Point>) {
-        let res = text.replace('|', "");
+    // Builds a file from the string with '|' removed, and returns the positions of the cursors.
+    fn cursors(text: &str) -> (File, Vec<tree_sitter::Point>) {
         let cursors = text
             .lines()
             .enumerate()
@@ -264,17 +257,7 @@ mod tests {
                     })
             })
             .collect();
-        (res, cursors)
-    }
-
-    // Takes a string with one '|' characters representing a cursor.
-    // Returns the string with '|' removed, and the position of the cursor.
-    fn cursor(text: &str) -> (File, tree_sitter::Point) {
-        let (text, cursors) = cursors(text);
-        (
-            File::new(text).unwrap(),
-            cursors.first().unwrap().to_owned(),
-        )
+        (File::new(text.replace('|', "")).unwrap(), cursors)
     }
 
     #[test]
@@ -374,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_completion_context() {
-        let (source, points) = cursors(
+        let (file, points) = cursors(
             r#"
             synt|ax = "proto3";
 
@@ -407,15 +390,13 @@ mod tests {
         assert_eq!(
             points
                 .iter()
-                .map(|p| File::new(source.clone())
-                    .unwrap()
-                    .completion_context(p.row, p.column))
+                .map(|p| file.completion_context(p.row, p.column))
                 .collect::<Vec<Option<CompletionContext>>>(),
             vec![
                 Some(CompletionContext::Keyword),
                 Some(CompletionContext::Import),
                 Some(CompletionContext::Keyword),
-                Some(CompletionContext::Message("Foo".into())),
+                None,
                 Some(CompletionContext::Message("Buz".into())),
                 Some(CompletionContext::Message("Bar".into())),
                 Some(CompletionContext::Keyword),
@@ -428,22 +409,33 @@ mod tests {
 
     #[test]
     fn test_completion_context_import() {
-        let (file, pos) = cursor(
+        let (file, points) = cursors(
             r#"
             syntax = "proto3";
-            import |
+            import "fo|o";
+            import "|
+            import "bar";
+            import "|
+            message Foo{}
             "#,
         );
 
         assert_eq!(
-            file.completion_context(pos.row, pos.column),
-            Some(CompletionContext::Import)
+            points
+                .iter()
+                .map(|p| file.completion_context(p.row, p.column))
+                .collect::<Vec<_>>(),
+            vec![
+                Some(CompletionContext::Import),
+                Some(CompletionContext::Import),
+                Some(CompletionContext::Import),
+            ]
         );
     }
 
     #[test]
     fn test_type_at() {
-        let (source, points) = cursors(
+        let (file, points) = cursors(
             r#"
             synt|ax = "proto3";
 
@@ -459,15 +451,10 @@ mod tests {
             "#,
         );
 
-        let files = points
-            .iter()
-            .map(|p| (p, File::new(source.clone()).unwrap()))
-            .collect::<Vec<_>>();
-
         assert_eq!(
-            files
+            points
                 .iter()
-                .map(|(p, f)| f.type_at(p.row, p.column))
+                .map(|p| file.type_at(p.row, p.column))
                 .collect::<Vec<Option<GotoContext>>>(),
             vec![
                 None,
