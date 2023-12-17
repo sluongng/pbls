@@ -590,7 +590,7 @@ fn test_complete_import() -> pbls::Result<()> {
         base_uri(),
         Position {
             line: 2,
-            character: "import \"".len().try_into().unwrap(),
+            character: "import ".len().try_into().unwrap(),
         },
     ))?;
 

@@ -239,6 +239,7 @@ fn type_name(node: tree_sitter::Node, text: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::logger;
 
     // Takes a string with '|' characters representing cursors.
     // Builds a file from the string with '|' removed, and returns the positions of the cursors.
@@ -262,6 +263,7 @@ mod tests {
 
     #[test]
     fn test_package() {
+        logger::init(log::Level::Trace);
         let text = r#"syntax="proto3"; package main;"#;
         let file = File::new(text.to_string()).unwrap();
         assert_eq!(file.package(), Some("main".into()));
@@ -277,6 +279,7 @@ mod tests {
 
     #[test]
     fn test_imports() {
+        logger::init(log::Level::Trace);
         let text = r#"
             syntax="proto3";
             package main;
@@ -294,6 +297,7 @@ mod tests {
 
     #[test]
     fn test_symbols() {
+        logger::init(log::Level::Trace);
         let text = r#"
             syntax="proto3"; 
             package main;
@@ -357,13 +361,14 @@ mod tests {
 
     #[test]
     fn test_completion_context() {
+        logger::init(log::Level::Trace);
         let (file, points) = cursors(
             r#"
             synt|ax = "proto3";
 
             import "other|.proto";
 
-            message |Foo {
+            message Foo {
                 uint32 i = 1;
                 st|ring s = 2;
             }
@@ -395,8 +400,7 @@ mod tests {
             vec![
                 Some(CompletionContext::Keyword),
                 Some(CompletionContext::Import),
-                Some(CompletionContext::Keyword),
-                None,
+                Some(CompletionContext::Message("Foo".into())),
                 Some(CompletionContext::Message("Buz".into())),
                 Some(CompletionContext::Message("Bar".into())),
                 Some(CompletionContext::Keyword),
@@ -409,6 +413,7 @@ mod tests {
 
     #[test]
     fn test_completion_context_import() {
+        logger::init(log::Level::Trace);
         let (file, points) = cursors(
             r#"
             syntax = "proto3";
@@ -435,6 +440,7 @@ mod tests {
 
     #[test]
     fn test_type_at() {
+        logger::init(log::Level::Trace);
         let (file, points) = cursors(
             r#"
             synt|ax = "proto3";
