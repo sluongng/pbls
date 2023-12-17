@@ -11,8 +11,8 @@ lsp-server = "0.7.4"
 protobuf-parse = "3.3.0"
 protobuf = "3.3.0"
 toml = "0.8.6"
-tree-sitter-proto = { git = "https://github.com/mitchellh/tree-sitter-proto", version = "0.0.1" }
-tree-sitter = "0.19.5"
+tree-sitter-protobuf = { git = "https://github.com/yusdacra/tree-sitter-protobuf", rev = "19c211a01434d9f03efff99f85e19f967591b175" }
+tree-sitter = "~0.20.0"
 log = "0.4.20"
 
 [dev-dependencies]

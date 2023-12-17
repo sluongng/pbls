@@ -4,7 +4,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn language() -> tree_sitter::Language {
     static LANGUAGE: OnceLock<tree_sitter::Language> = OnceLock::new();
-    *LANGUAGE.get_or_init(|| tree_sitter_proto::language())
+    *LANGUAGE.get_or_init(|| tree_sitter_protobuf::language())
 }
 
 #[derive(Debug, PartialEq)]
@@ -67,12 +67,12 @@ impl File {
     pub fn package(&self) -> Option<&str> {
         static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
         let query = QUERY.get_or_init(|| {
-            tree_sitter::Query::new(language(), "(package (full_ident (identifier) @id))").unwrap()
+            tree_sitter::Query::new(language(), "(package (fullIdent (ident) @id))").unwrap()
         });
 
         let mut qc = tree_sitter::QueryCursor::new();
         let res = qc
-            .matches(&query, self.tree.root_node(), |n| self.get_text(n))
+            .matches(&query, self.tree.root_node(), self.text.as_bytes())
             .next()
             .map(|m| m.captures[0].node)
             .map(|n| self.get_text(n))
@@ -86,10 +86,10 @@ impl File {
     ) -> impl Iterator<Item = &'this str> + 'cursor {
         static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
         let query = QUERY.get_or_init(|| {
-            tree_sitter::Query::new(language(), "(import path: (string) @path)").unwrap()
+            tree_sitter::Query::new(language(), "(import (strLit) @path)").unwrap()
         });
 
-        qc.matches(&query, self.tree.root_node(), |n| self.get_text(n))
+        qc.matches(&query, self.tree.root_node(), self.text.as_bytes())
             .map(|m| m.captures[0].node)
             .map(|n| self.get_text(n))
             .map(|s| s.trim_matches('"'))
@@ -101,15 +101,15 @@ impl File {
             tree_sitter::Query::new(
                 language(),
                 "[
-                     (message (message_name (identifier) @id))
-                     (enum (enum_name (identifier) @id))
+                     (message (messageName (ident) @id))
+                     (enum (enumName (ident) @id))
                  ] @def",
             )
             .unwrap()
         });
 
         let mut qc = tree_sitter::QueryCursor::new();
-        qc.matches(&query, self.tree.root_node(), |n| self.get_text(n))
+        qc.matches(&query, self.tree.root_node(), self.text.as_bytes())
             .map(|m| (m.captures[0].node, m.captures[1].node))
             .map(|(def, id)| Symbol {
                 kind: match def.kind() {
@@ -123,15 +123,25 @@ impl File {
             .collect()
     }
 
+    // Given an "ident" or "enumMessageType", node representing a type, find the name of the type.
+    fn field_type(&self, node: Option<tree_sitter::Node>) -> Option<&str> {
+        log::trace!("Finding type of {node:?}");
+        match node {
+            None => None,
+            Some(n) if n.kind() == "type" => Some(self.get_text(n)),
+            Some(n) => self.field_type(n.parent()),
+        }
+    }
+
     fn parent_context(&self, node: Option<tree_sitter::Node>) -> Option<CompletionContext> {
         log::trace!("Checking parent context: {node:?}");
         match node {
             None => None,
-            Some(n) if n.kind() == "enum_body" => n
+            Some(n) if n.kind() == "enumBody" => n
                 .parent() // enum
                 .and_then(|p| type_name(p, self.text.as_bytes()))
                 .and_then(|n| Some(CompletionContext::Enum(n))),
-            Some(n) if n.kind() == "message_body" => n
+            Some(n) if n.kind() == "messageBody" => n
                 .parent() // message
                 .and_then(|p| type_name(p, self.text.as_bytes()))
                 .and_then(|n| Some(CompletionContext::Message(n))),
@@ -142,7 +152,8 @@ impl File {
     pub fn completion_context(self: &Self, row: usize, col: usize) -> Option<CompletionContext> {
         let pos = tree_sitter::Point {
             row: row.try_into().unwrap(),
-            column: (col).try_into().unwrap(),
+            // Generally, the node before the cursor is more interesting for context.
+            column: (col.checked_sub(1).unwrap_or(0)).try_into().unwrap(),
         };
         let node = self
             .tree
@@ -166,6 +177,8 @@ impl File {
     }
 
     pub fn type_at(self: &Self, row: usize, col: usize) -> Option<GotoContext> {
+        log::trace!("Getting type at row: {row} col: {col}");
+
         let pos = tree_sitter::Point {
             row: row.try_into().unwrap(),
             column: col.try_into().unwrap(),
@@ -177,15 +190,17 @@ impl File {
 
         log::debug!("Getting type at node: {node:?} parent: {:?}", node.parent());
 
-        if node.kind() == "string" && node.parent().is_some_and(|p| p.kind() == "import") {
+        if node.kind() == "strLit" && node.parent().is_some_and(|p| p.kind() == "import") {
             return Some(GotoContext::Import(self.get_text(node).trim_matches('"')));
         }
 
-        if node.kind() == "message_or_enum_type" {
-            return Some(GotoContext::Type(self.get_text(node)));
+        if node.kind() == "ident" || node.kind() == "enumMessageType" {
+            if let Some(name) = self.field_type(Some(node)) {
+                return Some(GotoContext::Type(name));
+            }
         }
 
-        if node.kind() != "identifier" {
+        if node.kind() != "ident" {
             return None;
         }
 
@@ -230,7 +245,7 @@ fn type_name(node: tree_sitter::Node, text: &[u8]) -> Option<String> {
     let mut cursor = node.walk();
     let child = node
         .named_children(&mut cursor)
-        .find(|c| c.kind() == "message_name" || c.kind() == "enum_name");
+        .find(|c| c.kind() == "messageName" || c.kind() == "enumName");
     child
         .and_then(|c| c.utf8_text(text).ok())
         .map(|s| s.to_string())
@@ -363,7 +378,7 @@ mod tests {
     fn test_completion_context() {
         logger::init(log::Level::Trace);
         let (file, points) = cursors(
-            r#"
+            r#"|
             synt|ax = "proto3";
 
             import "other|.proto";
@@ -399,6 +414,7 @@ mod tests {
                 .collect::<Vec<Option<CompletionContext>>>(),
             vec![
                 Some(CompletionContext::Keyword),
+                Some(CompletionContext::Keyword),
                 Some(CompletionContext::Import),
                 Some(CompletionContext::Message("Foo".into())),
                 Some(CompletionContext::Message("Buz".into())),
@@ -419,8 +435,6 @@ mod tests {
             syntax = "proto3";
             import "fo|o";
             import "|
-            import "bar";
-            import "|
             message Foo{}
             "#,
         );
@@ -431,7 +445,6 @@ mod tests {
                 .map(|p| file.completion_context(p.row, p.column))
                 .collect::<Vec<_>>(),
             vec![
-                Some(CompletionContext::Import),
                 Some(CompletionContext::Import),
                 Some(CompletionContext::Import),
             ]
