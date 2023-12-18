@@ -95,7 +95,10 @@ impl File {
             .map(|s| s.trim_matches('"'))
     }
 
-    pub fn symbols(&self) -> Vec<Symbol> {
+    pub fn symbols<'this: 'cursor, 'cursor>(
+        &'this self,
+        qc: &'cursor mut tree_sitter::QueryCursor,
+    ) -> impl Iterator<Item = Symbol> + 'cursor {
         static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
         let query = QUERY.get_or_init(|| {
             tree_sitter::Query::new(
@@ -108,7 +111,6 @@ impl File {
             .unwrap()
         });
 
-        let mut qc = tree_sitter::QueryCursor::new();
         qc.matches(&query, self.tree.root_node(), self.text.as_bytes())
             .map(|m| (m.captures[0].node, m.captures[1].node))
             .map(|(def, id)| Symbol {
@@ -120,7 +122,6 @@ impl File {
                 parent: parent_name(def, self.text.as_bytes()),
                 range: def.range(),
             })
-            .collect()
     }
 
     // Given an "ident" or "enumMessageType", node representing a type, find the name of the type.
@@ -313,8 +314,9 @@ mod tests {
             }
         "#;
         let file = File::new(text.to_string()).unwrap();
+        let mut qc = tree_sitter::QueryCursor::new();
         assert_eq!(
-            file.symbols(),
+            file.symbols(&mut qc).collect::<Vec<_>>(),
             vec![
                 Symbol {
                     kind: SymbolKind::Message,

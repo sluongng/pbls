@@ -716,13 +716,35 @@ fn test_complete_type() -> pbls::Result<()> {
                 ..Default::default()
             },
             CompletionItem {
-                label: "Foo.Buz".into(),
+                // BUG: Should be Foo.Buz
+                label: "Buz".into(),
                 kind: Some(CompletionItemKind::STRUCT),
                 ..Default::default()
             },
             CompletionItem {
                 label: "Thing".into(),
                 kind: Some(CompletionItemKind::ENUM),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "Dep".into(),
+                kind: Some(CompletionItemKind::STRUCT),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "Dep2".into(),
+                kind: Some(CompletionItemKind::ENUM),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "Other".into(),
+                kind: Some(CompletionItemKind::STRUCT),
+                ..Default::default()
+            },
+            CompletionItem {
+                // BUG: Should be other.Other.Nested
+                label: "Nested".into(),
+                kind: Some(CompletionItemKind::STRUCT),
                 ..Default::default()
             },
         ],

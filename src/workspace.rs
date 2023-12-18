@@ -4,6 +4,7 @@ use crate::file;
 
 use super::parser::Parser;
 use lsp_types::{SymbolInformation, Url};
+use tree_sitter::QueryCursor;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -77,11 +78,11 @@ impl Workspace {
     }
 
     pub fn symbols(&self, uri: &Url) -> Result<Vec<SymbolInformation>> {
+        let mut qc = tree_sitter::QueryCursor::new();
         Ok(self
             .get(uri)?
-            .symbols()
-            .iter()
-            .map(|s| to_lsp_symbol(uri.clone(), s))
+            .symbols(&mut qc)
+            .map(|s| to_lsp_symbol(uri.clone(), &s))
             .collect())
     }
 
@@ -96,6 +97,7 @@ impl Workspace {
             .filter(|p| p.is_file() && p.extension().map_or(false, |e| e == "proto"))
             .map(|p| std::fs::canonicalize(p));
         let mut res = vec![];
+        let mut qc = tree_sitter::QueryCursor::new();
         for path in paths {
             let path = path?;
             let uri = Url::from_file_path(&path).or(Err(format!("Invalid path: {path:?}")))?;
@@ -107,8 +109,8 @@ impl Workspace {
                 self.files.insert(uri.clone(), file);
                 self.files.get(&uri).unwrap()
             };
-            let symbols = file.symbols();
-            let syms = symbols.iter().map(|s| to_lsp_symbol(uri.clone(), s));
+            let symbols = file.symbols(&mut qc);
+            let syms = symbols.map(|s| to_lsp_symbol(uri.clone(), &s));
             res.extend(syms);
         }
         Ok(res)
@@ -187,7 +189,8 @@ impl Workspace {
         name: &str,
     ) -> Result<Option<lsp_types::Location>> {
         // First look within the file.
-        if let Some(sym) = file.symbols().iter().find(|s| s.full_name() == name) {
+        let mut qc = tree_sitter::QueryCursor::new();
+        if let Some(sym) = file.symbols(&mut qc).find(|s| s.full_name() == name) {
             return Ok(Some(lsp_types::Location {
                 uri,
                 range: to_lsp_range(sym.range),
@@ -202,6 +205,7 @@ impl Workspace {
             .map(|path| Url::from_file_path(path).unwrap())
             .map(|uri| (uri.clone(), self.get(&uri).unwrap()));
 
+        let mut qc = tree_sitter::QueryCursor::new();
         let local_package = file.package();
         for (uri, file) in imports {
             let package = file.package();
@@ -217,8 +221,7 @@ impl Workspace {
                 name.to_string()
             };
             if let Some(sym) = file
-                .symbols()
-                .iter()
+                .symbols(&mut qc)
                 .find(|sym| sym.full_name() == expected_name)
             {
                 return Ok(Some(lsp_types::Location {
@@ -231,26 +234,37 @@ impl Workspace {
     }
 
     fn complete_types(&self, uri: &Url) -> Result<Option<lsp_types::CompletionResponse>> {
-        let syms = self.symbols(uri)?;
-        let items = syms.iter().map(|s| lsp_types::CompletionItem {
-            label: s.name.clone(),
-            label_details: None,
-            kind: Some(match s.kind {
-                lsp_types::SymbolKind::ENUM => lsp_types::CompletionItemKind::ENUM,
-                _ => lsp_types::CompletionItemKind::STRUCT,
-            }),
-            detail: None,
-            documentation: None,
-            ..Default::default()
-        });
+        let file = self.get(uri)?;
+        let mut qc = QueryCursor::new();
+        let imports = file
+            .imports(&mut qc)
+            .filter_map(|name| self.find_import(name))
+            .map(|path| Url::from_file_path(path).unwrap())
+            .map(|uri| self.get(&uri).unwrap());
+        let files = std::iter::once(file).chain(imports);
+
+        let mut items = vec![];
+        for file in files {
+            let mut qc = tree_sitter::QueryCursor::new();
+            items.extend(file.symbols(&mut qc).map(|s| lsp_types::CompletionItem {
+                label: s.name.clone(),
+                label_details: None,
+                kind: Some(match s.kind {
+                    file::SymbolKind::Enum => lsp_types::CompletionItemKind::ENUM,
+                    _ => lsp_types::CompletionItemKind::STRUCT,
+                }),
+                ..Default::default()
+            }));
+        }
+
         let keywords = ["message", "enum"].map(|s| lsp_types::CompletionItem {
             label: s.to_string(),
             kind: Some(lsp_types::CompletionItemKind::KEYWORD),
             ..Default::default()
         });
-        Ok(Some(lsp_types::CompletionResponse::Array(
-            items.chain(keywords).collect(),
-        )))
+        items.extend(keywords);
+
+        Ok(Some(lsp_types::CompletionResponse::Array(items)))
     }
 
     fn complete_imports(
