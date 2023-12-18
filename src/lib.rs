@@ -5,13 +5,10 @@ mod workspace;
 
 use lsp_types::notification::DidChangeTextDocument;
 use lsp_types::request::Completion;
-use lsp_types::CompletionItem;
-use lsp_types::CompletionItemKind;
 use lsp_types::CompletionParams;
 use lsp_types::CompletionResponse;
 use lsp_types::DidChangeTextDocumentParams;
 use lsp_types::SaveOptions;
-use lsp_types::SymbolKind;
 use lsp_types::TextDocumentSyncKind;
 
 use lsp_server::{Connection, Message};
@@ -94,7 +91,7 @@ fn handle_document_symbols(
     params: DocumentSymbolParams,
 ) -> Result<Option<DocumentSymbolResponse>> {
     Ok(Some(DocumentSymbolResponse::Flat(
-        workspace.symbols(params.text_document.uri)?,
+        workspace.symbols(&params.text_document.uri)?,
     )))
 }
 
@@ -124,64 +121,7 @@ fn handle_completion(
 ) -> Result<Option<CompletionResponse>> {
     let pos = params.text_document_position.position;
     let uri = params.text_document_position.text_document.uri;
-    match workspace.completion_context(&uri, pos.line.try_into()?, pos.character.try_into()?)? {
-        Some(file::CompletionContext::Message(_)) => complete_types(workspace, uri),
-        Some(file::CompletionContext::Enum(_)) => Ok(None), // TODO
-        Some(file::CompletionContext::Keyword) => Ok(complete_keywords()),
-        Some(file::CompletionContext::Import) => complete_imports(workspace, uri),
-        None => Ok(None),
-    }
-}
-
-fn complete_keywords() -> Option<CompletionResponse> {
-    let items = ["message", "enum", "import"]
-        .iter()
-        .map(|s| CompletionItem {
-            label: s.to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            ..Default::default()
-        });
-    Some(CompletionResponse::Array(items.collect()))
-}
-
-fn complete_types(
-    workspace: &mut workspace::Workspace,
-    uri: lsp_types::Url,
-) -> Result<Option<CompletionResponse>> {
-    let syms = workspace.symbols(uri)?;
-    let items = syms.iter().map(|s| CompletionItem {
-        label: s.name.clone(),
-        label_details: None,
-        kind: Some(match s.kind {
-            SymbolKind::ENUM => CompletionItemKind::ENUM,
-            _ => CompletionItemKind::STRUCT,
-        }),
-        detail: None,
-        documentation: None,
-        ..Default::default()
-    });
-    let keywords = ["message", "enum"].map(|s| CompletionItem {
-        label: s.to_string(),
-        kind: Some(CompletionItemKind::KEYWORD),
-        ..Default::default()
-    });
-    Ok(Some(CompletionResponse::Array(
-        items.chain(keywords).collect(),
-    )))
-}
-
-fn complete_imports(
-    workspace: &mut workspace::Workspace,
-    url: lsp_types::Url,
-) -> Result<Option<CompletionResponse>> {
-    let items = workspace.available_imports(&url)?.map(|s| CompletionItem {
-        label: s.clone(),
-        label_details: None,
-        kind: Some(CompletionItemKind::FILE),
-        insert_text: Some(format!("{}\";", s)),
-        ..Default::default()
-    });
-    Ok(Some(CompletionResponse::Array(items.collect())))
+    workspace.complete(&uri, pos.line.try_into()?, pos.character.try_into()?)
 }
 
 fn notify_did_open(

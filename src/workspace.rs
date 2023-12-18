@@ -76,9 +76,9 @@ impl Workspace {
         self.open(uri.clone(), text)
     }
 
-    pub fn symbols(&self, uri: Url) -> Result<Vec<SymbolInformation>> {
+    pub fn symbols(&self, uri: &Url) -> Result<Vec<SymbolInformation>> {
         Ok(self
-            .get(&uri)?
+            .get(uri)?
             .symbols()
             .iter()
             .map(|s| to_lsp_symbol(uri.clone(), s))
@@ -114,17 +114,23 @@ impl Workspace {
         Ok(res)
     }
 
-    pub fn completion_context(
+    pub fn complete(
         &self,
         uri: &Url,
         line: usize,
         character: usize,
-    ) -> Result<Option<file::CompletionContext>> {
+    ) -> Result<Option<lsp_types::CompletionResponse>> {
         let file = self
             .files
             .get(uri)
             .ok_or("Completion requested on file with no tree for {uri}")?;
-        Ok(file.completion_context(line, character))
+        match file.completion_context(line, character) {
+            Some(file::CompletionContext::Message(_)) => self.complete_types(uri),
+            Some(file::CompletionContext::Enum(_)) => Ok(None), // TODO
+            Some(file::CompletionContext::Keyword) => Ok(complete_keywords()),
+            Some(file::CompletionContext::Import) => self.complete_imports(uri),
+            None => Ok(None),
+        }
     }
 
     // Return all available imports for a given file.
@@ -223,6 +229,56 @@ impl Workspace {
         }
         Ok(None)
     }
+
+    fn complete_types(&self, uri: &Url) -> Result<Option<lsp_types::CompletionResponse>> {
+        let syms = self.symbols(uri)?;
+        let items = syms.iter().map(|s| lsp_types::CompletionItem {
+            label: s.name.clone(),
+            label_details: None,
+            kind: Some(match s.kind {
+                lsp_types::SymbolKind::ENUM => lsp_types::CompletionItemKind::ENUM,
+                _ => lsp_types::CompletionItemKind::STRUCT,
+            }),
+            detail: None,
+            documentation: None,
+            ..Default::default()
+        });
+        let keywords = ["message", "enum"].map(|s| lsp_types::CompletionItem {
+            label: s.to_string(),
+            kind: Some(lsp_types::CompletionItemKind::KEYWORD),
+            ..Default::default()
+        });
+        Ok(Some(lsp_types::CompletionResponse::Array(
+            items.chain(keywords).collect(),
+        )))
+    }
+
+    fn complete_imports(
+        &self,
+        url: &lsp_types::Url,
+    ) -> Result<Option<lsp_types::CompletionResponse>> {
+        let items = self
+            .available_imports(&url)?
+            .map(|s| lsp_types::CompletionItem {
+                label: s.clone(),
+                label_details: None,
+                kind: Some(lsp_types::CompletionItemKind::FILE),
+                insert_text: Some(format!("{}\";", s)),
+                ..Default::default()
+            });
+        Ok(Some(lsp_types::CompletionResponse::Array(items.collect())))
+    }
+}
+
+fn complete_keywords() -> Option<lsp_types::CompletionResponse> {
+    let items = ["message", "enum", "import"]
+        .iter()
+        .map(|s| lsp_types::CompletionItem {
+            label: s.to_string(),
+            kind: Some(lsp_types::CompletionItemKind::KEYWORD),
+            ..Default::default()
+        });
+    Some(lsp_types::CompletionResponse::Array(items.collect()))
 }
 
 fn to_lsp_pos(p: tree_sitter::Point) -> lsp_types::Position {

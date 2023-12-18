@@ -171,8 +171,10 @@ impl File {
             Some(CompletionContext::Import)
         } else if let Some(parent) = self.parent_context(Some(node)) {
             Some(parent)
-        } else {
+        } else if node.kind() == "source_file" {
             Some(CompletionContext::Keyword)
+        } else {
+            None
         }
     }
 
@@ -402,7 +404,7 @@ mod tests {
                 .collect::<Vec<Option<CompletionContext>>>(),
             vec![
                 Some(CompletionContext::Keyword),
-                Some(CompletionContext::Keyword),
+                None,
                 Some(CompletionContext::Import),
                 Some(CompletionContext::Message("Foo".into())),
                 Some(CompletionContext::Message("Buz".into())),
@@ -436,6 +438,29 @@ mod tests {
                 Some(CompletionContext::Import),
                 Some(CompletionContext::Import),
             ]
+        );
+    }
+
+    #[test]
+    fn test_completion_context_keyword() {
+        logger::init(log::Level::Trace);
+        let (file, points) = cursors(
+            r#"
+            syntax = "proto3";
+            |
+
+            message |
+
+            message {}
+            "#,
+        );
+
+        assert_eq!(
+            points
+                .iter()
+                .map(|p| file.completion_context(p.row, p.column))
+                .collect::<Vec<_>>(),
+            vec![Some(CompletionContext::Keyword), None,]
         );
     }
 
