@@ -10,7 +10,7 @@
   - [x] Import
 - [x] Document Symbols
 - [x] Workspace Symbols
-- [ ] Completion (WIP)
+- [ ] Completion (WIP, still has some bugs)
   - [x] Keyword
   - [x] Import
   - [x] Field Type
@@ -22,25 +22,26 @@ Ensure [`protoc`](https://github.com/protocolbuffers/protobuf#protobuf-compiler-
 
 # Installation
 
-## From Source
+```
+cargo install --git https://git.sr.ht/~rcorre/pbls
+```
 
-1. Run `cargo install --path .` from the repository root.
-2. Optionally, add the cargo binary path (`~/.cargo/bin` by default) to your `$PATH`.
-3. Finally, [configure pbls in your editor](#editor-setup).
-
-## Packages
-
-None yet. If you package `pbls` for the distro of your choice, let me know!
+Ensure the cargo binary path (usually `~/.cargo/bin`) is on `$PATH`.
+Finally, [configure pbls in your editor](#editor-setup).
 
 # Configuration
 
 Create a file named ".pbls.toml" at your workspace root, and specify the proto import paths that are passed to the `-I`/`--proto_path` flag of `protoc`.
+These can be absolute, or local to the workspace.
+Make sure to include the "well known" types ("google/protobuf/*.proto").
+This is often "/usr/include" on a unix system.
 
 ```toml
-proto_paths=["one", "two/three"]
+proto_paths=["some/workspace/path", "/usr/include"]
 ```
 
-If this is omitted, `pbls` will automatically add every folder in the workspace containing a protobuf file to the import path. This will not work properly when proto files specify imports containing directories, like `import "foo/bar.proto"`.
+If this is omitted, `pbls` will make a best-effort attempt to add local include paths.
+In general, prefer explicitly specifying paths.
 
 # Editor Setup
 
@@ -57,7 +58,8 @@ command = "pbls"
 [[language]]
 name = "protobuf"
 language-servers = ['pbls']
-formatter = { command = "clang-format" } # optional
+# Unrelated to pbls, you may want to use clang-format as a formatter
+formatter = { command = "clang-format" , args = ["--assume-filename=a.proto"]}
 ```
 
 # Similar Projects
