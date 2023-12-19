@@ -526,6 +526,40 @@ mod tests {
     }
 
     #[test]
+    fn test_completion_context_message() {
+        logger::init(log::Level::Trace);
+
+        fn test(lines: &[&str], expected: Option<CompletionContext>) {
+            let text = lines.join("\n");
+            let (file, point) = cursor(text.as_str());
+            assert_eq!(
+                file.completion_context(point.row, point.column).unwrap(),
+                expected,
+                "text:\n{}",
+                text
+            );
+        }
+
+        test(
+            &[r#"syntax = "proto3";"#, "message Foo{ | }", ""],
+            Some(CompletionContext::Message("Foo".into())),
+        );
+        test(
+            &[r#"syntax = "proto3";"#, "message Foo{", "|", "}"],
+            Some(CompletionContext::Message("Foo".into())),
+        );
+        test(
+            &[r#"syntax = "proto3";"#, "message Foo{", "int|", "}"],
+            Some(CompletionContext::Message("Foo".into())),
+        );
+        // BUG
+        // test(
+        //     &[r#"syntax = "proto3";"#, "message Foo{", "int |", "}"],
+        //     None,
+        // );
+    }
+
+    #[test]
     fn test_type_at() {
         logger::init(log::Level::Trace);
         let (file, points) = cursors(
