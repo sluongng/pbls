@@ -266,9 +266,16 @@ pub fn run(connection: Connection, loglevel: log::Level) -> Result<()> {
             proto_paths: find_import_paths(root)?,
         }
     };
-    eprintln!("Using config {:?}", conf);
+    log::info!("Using config {:?}", conf);
 
-    let mut workspace = workspace::Workspace::new(conf.proto_paths);
+    let proto_paths = conf
+        .proto_paths
+        .iter()
+        .map(|p| p.canonicalize().unwrap())
+        .collect();
+    log::debug!("Using proto_paths {:?}", proto_paths);
+
+    let mut workspace = workspace::Workspace::new(proto_paths);
 
     for msg in &connection.receiver {
         eprintln!("Handling message {msg:?}");

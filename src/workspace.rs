@@ -24,7 +24,7 @@ impl Workspace {
     }
 
     fn get(self: &Self, uri: &Url) -> Result<&file::File> {
-        Ok(self.files.get(uri).ok_or("File not loaded: {uri}")?)
+        Ok(self.files.get(uri).ok_or(format!("File not loaded: {uri}"))?)
     }
 
     fn find_import(&self, name: &str) -> Option<std::path::PathBuf> {
@@ -41,7 +41,7 @@ impl Workspace {
             return Ok(());
         };
 
-        let uri = Url::from_file_path(path.clone()).unwrap();
+        let uri = Url::from_file_path(path.clone()).or(Err(format!("Invalid path {path:?}")))?;
         if self.files.contains_key(&uri) {
             return Ok(()); // already parsed
         };
