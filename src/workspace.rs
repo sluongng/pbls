@@ -126,7 +126,7 @@ impl Workspace {
             .files
             .get(uri)
             .ok_or("Completion requested on file with no tree for {uri}")?;
-        match file.completion_context(line, character) {
+        match file.completion_context(line, character)? {
             Some(file::CompletionContext::Message(_)) => self.complete_types(uri),
             Some(file::CompletionContext::Enum(_)) => Ok(None), // TODO
             Some(file::CompletionContext::Keyword) => Ok(complete_keywords()),

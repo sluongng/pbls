@@ -150,32 +150,57 @@ impl File {
         }
     }
 
-    pub fn completion_context(self: &Self, row: usize, col: usize) -> Option<CompletionContext> {
+    pub fn completion_context(
+        self: &Self,
+        row: usize,
+        col: usize,
+    ) -> Result<Option<CompletionContext>> {
         let pos = tree_sitter::Point {
             row: row.try_into().unwrap(),
             // Generally, the node before the cursor is more interesting for context.
-            column: (col.checked_sub(1).unwrap_or(0)).try_into().unwrap(),
+            column: (col.checked_sub(1).unwrap_or(0)).try_into()?,
         };
         let node = self
             .tree
             .root_node()
-            .named_descendant_for_point_range(pos, pos)?;
+            .named_descendant_for_point_range(pos, pos)
+            .ok_or(format!("No descendant for range {pos:?}"))?;
 
         log::debug!(
-            "Getting completion context for {node:?}: {:?}",
-            node.prev_sibling()
+            "Getting completion context for {node:?}: {:?}\n---text---\n{}\n",
+            node.prev_sibling(),
+            self.text
         );
 
-        // let line = self.text.lines().skip(row).next().unwrap();
-
         if node.prev_sibling().is_some_and(|s| s.kind() == "import") {
-            Some(CompletionContext::Import)
+            Ok(Some(CompletionContext::Import))
         } else if let Some(parent) = self.parent_context(Some(node)) {
-            Some(parent)
+            Ok(Some(parent))
+        } else if node.kind() == "ERROR" {
+            // typically means we're typing the first word of a line
+            Ok(Some(CompletionContext::Keyword))
         } else if node.kind() == "source_file" {
-            Some(CompletionContext::Keyword)
+            log::trace!("Checking keyword completion for line {row}");
+            let line: String = self
+                .text
+                .lines()
+                .skip(row)
+                .next()
+                .ok_or(format!("Line {row} out of range"))?
+                .chars()
+                .take(col)
+                .collect();
+
+            log::trace!("Checking keyword completion for line {line}");
+
+            if line.trim_start().split(char::is_whitespace).count() <= 1 {
+                // first word of the line
+                Ok(Some(CompletionContext::Keyword))
+            } else {
+                Ok(None)
+            }
         } else {
-            None
+            Ok(None)
         }
     }
 
@@ -265,6 +290,26 @@ mod tests {
             })
             .collect();
         (File::new(text.replace('|', "")).unwrap(), cursors)
+    }
+
+    // Like cursors, but expect exactly one |
+    fn cursor(text: &str) -> (File, tree_sitter::Point) {
+        let cursor = text
+            .lines()
+            .enumerate()
+            .flat_map(|(row, line)| {
+                line.match_indices('|')
+                    .enumerate()
+                    .map(move |(i, (column, _))| tree_sitter::Point {
+                        row,
+                        // subtract 1 for each '|' before in this row,
+                        // as those offset the position of following '|'
+                        column: column - i,
+                    })
+            })
+            .next()
+            .unwrap();
+        (File::new(text.replace('|', "")).unwrap(), cursor)
     }
 
     #[test]
@@ -402,7 +447,7 @@ mod tests {
         assert_eq!(
             points
                 .iter()
-                .map(|p| file.completion_context(p.row, p.column))
+                .map(|p| file.completion_context(p.row, p.column).unwrap())
                 .collect::<Vec<Option<CompletionContext>>>(),
             vec![
                 Some(CompletionContext::Keyword),
@@ -434,7 +479,7 @@ mod tests {
         assert_eq!(
             points
                 .iter()
-                .map(|p| file.completion_context(p.row, p.column))
+                .map(|p| file.completion_context(p.row, p.column).unwrap())
                 .collect::<Vec<_>>(),
             vec![
                 Some(CompletionContext::Import),
@@ -446,23 +491,37 @@ mod tests {
     #[test]
     fn test_completion_context_keyword() {
         logger::init(log::Level::Trace);
-        let (file, points) = cursors(
-            r#"
-            syntax = "proto3";
-            |
 
-            message |
+        fn test(lines: &[&str], expected: Option<CompletionContext>) {
+            let text = lines.join("\n");
+            let (file, point) = cursor(text.as_str());
+            assert_eq!(
+                file.completion_context(point.row, point.column).unwrap(),
+                expected,
+                "text:\n{}",
+                text
+            );
+        }
 
-            message {}
-            "#,
+        // first word of the line
+        test(
+            &[r#"syntax = "proto3";"#, "|", ""],
+            Some(CompletionContext::Keyword),
+        );
+        test(
+            &[r#"syntax = "proto3";"#, "mes|", ""],
+            Some(CompletionContext::Keyword),
         );
 
-        assert_eq!(
-            points
-                .iter()
-                .map(|p| file.completion_context(p.row, p.column))
-                .collect::<Vec<_>>(),
-            vec![Some(CompletionContext::Keyword), None,]
+        // following words of the line
+        test(&[r#"syntax = "proto3";"#, "message |", ""], None);
+        test(&[r#"syntax = "proto3";"#, "message Fo|", ""], None);
+        test(&[r#"syntax = "proto3";"#, "message Foo |", ""], None);
+
+        // new line
+        test(
+            &[r#"syntax = "proto3";"#, "message Foo{}", "mes|"],
+            Some(CompletionContext::Keyword),
         );
     }
 
@@ -505,5 +564,18 @@ mod tests {
                 None,
             ]
         );
+    }
+
+    fn test_whitespace(s: &str) -> usize {
+        s.trim_start().split(char::is_whitespace).count()
+    }
+
+    #[test]
+    fn test_rrc() {
+        assert_eq!(1, test_whitespace(""));
+        assert_eq!(1, test_whitespace("  "));
+        assert_eq!(1, test_whitespace("  foo"));
+        assert_eq!(2, test_whitespace("   foo "));
+        assert_eq!(2, test_whitespace("   foo bar"));
     }
 }
