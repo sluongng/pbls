@@ -285,6 +285,36 @@ fn is_top_level_error(node: tree_sitter::Node) -> bool {
     }
 }
 
+// Find the shortest form of a type name relative to a message
+// relative_name("Foo", "Foo.Bar.Baz") -> "Bar.Baz"
+// relative_name("Foo.Bar", "Foo.Bar.Baz") -> "Baz"
+// relative_name("Foo.Bar", "Foo.Bar") -> "Bar"
+// relative_name("Foo.Bar", "Foo") -> "Foo"
+fn relative_name<'a>(message: &str, name: &'a str) -> String {
+    let prefix = name
+        .split(".")
+        .zip(message.split("."))
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a)
+        .collect::<Vec<_>>()
+        .join(".");
+
+    eprintln!("{message}, {name}, {prefix}");
+
+    if prefix.len() == name.len() {
+        let Some((_, name)) = name.rsplit_once(".") else {
+            return name.to_string();
+        };
+        name.to_string()
+    } else {
+        name.strip_prefix(prefix.as_str())
+            .unwrap_or(name)
+            .strip_prefix(".")
+            .unwrap_or(name)
+            .to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -626,16 +656,22 @@ mod tests {
         );
     }
 
-    fn test_whitespace(s: &str) -> usize {
-        s.trim_start().split(char::is_whitespace).count()
-    }
-
     #[test]
-    fn test_rrc() {
-        assert_eq!(1, test_whitespace(""));
-        assert_eq!(1, test_whitespace("  "));
-        assert_eq!(1, test_whitespace("  foo"));
-        assert_eq!(2, test_whitespace("   foo "));
-        assert_eq!(2, test_whitespace("   foo bar"));
+    fn test_relative_name() {
+        assert_eq!(relative_name("Foo", "Biz.Bar.Baz"), "Biz.Bar.Baz");
+        assert_eq!(relative_name("Foo.Bar", "Biz.Bar.Baz"), "Biz.Bar.Baz");
+        assert_eq!(relative_name("Foo.Bar.Baz", "Biz.Bar.Baz"), "Biz.Bar.Baz");
+
+        assert_eq!(relative_name("Foo.Bar.Baz", "Foo.Bar.Baz"), "Baz");
+        assert_eq!(relative_name("Foo.Bar.Baz", "Foo.Bar"), "Bar");
+        assert_eq!(relative_name("Foo.Bar.Baz", "Foo"), "Foo");
+
+        assert_eq!(relative_name("Foo.Bar", "Foo.Bar.Baz"), "Baz");
+        assert_eq!(relative_name("Foo.Bar", "Foo.Bar"), "Bar");
+        assert_eq!(relative_name("Foo.Bar", "Foo"), "Foo");
+
+        assert_eq!(relative_name("Foo", "Foo.Bar.Baz"), "Bar.Baz");
+        assert_eq!(relative_name("Foo", "Foo.Bar"), "Bar");
+        assert_eq!(relative_name("Foo", "Foo"), "Foo");
     }
 }
