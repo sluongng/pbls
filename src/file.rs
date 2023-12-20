@@ -135,9 +135,15 @@ impl File {
     }
 
     fn parent_context(&self, node: Option<tree_sitter::Node>) -> Option<CompletionContext> {
-        log::trace!("Checking parent context: {node:?}");
+        log::trace!(
+            "Checking parent context: {node:?} - {}",
+            node.map_or("".into(), |n| n.to_sexp())
+        );
         match node {
+            // Hit the document root
             None => None,
+            // Don't complete if we're typing a field name or number
+            Some(n) if n.kind() == "fieldName" => None,
             Some(n) if n.kind() == "enumBody" => n
                 .parent() // enum
                 .and_then(|p| type_name(p, self.text.as_bytes()))
@@ -167,20 +173,19 @@ impl File {
             .ok_or(format!("No descendant for range {pos:?}"))?;
 
         log::debug!(
-            "Getting completion context for {node:?}: {:?}\n---text---\n{}\n",
+            "Getting completion context for node={node:?} prev={:?} parent={:?}",
             node.prev_sibling(),
-            self.text
+            node.parent(),
         );
 
         if node.prev_sibling().is_some_and(|s| s.kind() == "import") {
             Ok(Some(CompletionContext::Import))
-        } else if let Some(parent) = self.parent_context(Some(node)) {
-            Ok(Some(parent))
-        } else if node.kind() == "ERROR" {
+        } else if node.kind() == "ident" || node.kind() == "type" {
+            Ok(self.parent_context(Some(node)))
+        } else if is_top_level_error(node) {
             // typically means we're typing the first word of a line
             Ok(Some(CompletionContext::Keyword))
         } else if node.kind() == "source_file" {
-            log::trace!("Checking keyword completion for line {row}");
             let line: String = self
                 .text
                 .lines()
@@ -265,6 +270,19 @@ fn type_name(node: tree_sitter::Node, text: &[u8]) -> Option<String> {
     child
         .and_then(|c| c.utf8_text(text).ok())
         .map(|s| s.to_string())
+}
+
+fn is_top_level_error(node: tree_sitter::Node) -> bool {
+    if node.is_error() || node.is_missing() {
+        match node.parent() {
+            None => true,
+            Some(n) if n.kind() == "source_file" => true,
+            Some(n) if n.is_error() || n.is_missing() => is_top_level_error(n),
+            _ => false,
+        }
+    } else {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -427,11 +445,11 @@ mod tests {
 
             message Bar {
                 message Buz {
-                    |
+                    b|
                 }
 
                 Buz b = 1;
-                |
+                Ba|
             }
 
             |
@@ -457,9 +475,9 @@ mod tests {
                 Some(CompletionContext::Message("Buz".into())),
                 Some(CompletionContext::Message("Bar".into())),
                 Some(CompletionContext::Keyword),
+                None,
                 Some(CompletionContext::Enum("Enum".into())),
-                Some(CompletionContext::Enum("Enum".into())),
-                Some(CompletionContext::Enum("Enum".into())),
+                None,
             ]
         );
     }
@@ -530,7 +548,7 @@ mod tests {
         logger::init(log::Level::Trace);
 
         fn test(lines: &[&str], expected: Option<CompletionContext>) {
-            let text = lines.join("\n");
+            let text = format!("syntax = \"proto3\";\n{}\n", lines.join("\n"));
             let (file, point) = cursor(text.as_str());
             assert_eq!(
                 file.completion_context(point.row, point.column).unwrap(),
@@ -540,23 +558,31 @@ mod tests {
             );
         }
 
+        test(&["message Foo{ | }", ""], None);
         test(
-            &[r#"syntax = "proto3";"#, "message Foo{ | }", ""],
+            &["message Foo{ B| }", ""],
             Some(CompletionContext::Message("Foo".into())),
         );
         test(
-            &[r#"syntax = "proto3";"#, "message Foo{", "|", "}"],
+            &["message Foo{ B|ar }", ""],
             Some(CompletionContext::Message("Foo".into())),
         );
         test(
-            &[r#"syntax = "proto3";"#, "message Foo{", "int|", "}"],
+            &["message Foo{ s|tring }", ""],
             Some(CompletionContext::Message("Foo".into())),
         );
-        // BUG
-        // test(
-        //     &[r#"syntax = "proto3";"#, "message Foo{", "int |", "}"],
-        //     None,
-        // );
+        test(&["message Foo{ Bar | }"], None);
+        test(&["message Foo{ Bar b| }"], None);
+        test(&["message Foo{ Bar b|ar }"], None);
+        test(&["message Foo{ Bar bar |}"], None);
+        test(&["message Foo{ Bar bar | }"], None);
+        test(&["message Foo{ Bar bar |= }"], None);
+        test(&["message Foo{ Bar bar =| }"], None);
+        test(&["message Foo{ Bar bar = | }"], None);
+        test(&["message Foo{ Bar bar = |1 }"], None);
+        test(&["message Foo{ Bar bar = 1| }"], None);
+        test(&["message Foo{ Bar bar = 1|; }"], None);
+        test(&["message Foo{ Bar bar = 1;| }"], None);
     }
 
     #[test]

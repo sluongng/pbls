@@ -673,13 +673,13 @@ fn test_complete_type() -> pbls::Result<()> {
     client.open(base_uri())?;
 
     // get completion in the body of message Foo.
-    let pos = locate(base_uri(), "message Foo {").range.start;
+    let pos = locate(base_uri(), "Thing t =").range.start;
 
     let resp = client.request::<Completion>(completion_params(
         base_uri(),
         Position {
-            line: pos.line + 1,
-            character: 0,
+            line: pos.line,
+            character: 4,
         },
     ))?;
 
