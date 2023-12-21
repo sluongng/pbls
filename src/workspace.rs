@@ -24,7 +24,10 @@ impl Workspace {
     }
 
     fn get(self: &Self, uri: &Url) -> Result<&file::File> {
-        Ok(self.files.get(uri).ok_or(format!("File not loaded: {uri}"))?)
+        Ok(self
+            .files
+            .get(uri)
+            .ok_or(format!("File not loaded: {uri}"))?)
     }
 
     fn find_import(&self, name: &str) -> Option<std::path::PathBuf> {
@@ -82,7 +85,7 @@ impl Workspace {
         Ok(self
             .get(uri)?
             .symbols(&mut qc)
-            .map(|s| to_lsp_symbol(uri.clone(), &s))
+            .map(|s| to_lsp_symbol(uri.clone(), s))
             .collect())
     }
 
@@ -110,7 +113,7 @@ impl Workspace {
                 self.files.get(&uri).unwrap()
             };
             let symbols = file.symbols(&mut qc);
-            let syms = symbols.map(|s| to_lsp_symbol(uri.clone(), &s));
+            let syms = symbols.map(|s| to_lsp_symbol(uri.clone(), s));
             res.extend(syms);
         }
         Ok(res)
@@ -190,7 +193,7 @@ impl Workspace {
     ) -> Result<Option<lsp_types::Location>> {
         // First look within the file.
         let mut qc = tree_sitter::QueryCursor::new();
-        if let Some(sym) = file.symbols(&mut qc).find(|s| s.full_name() == name) {
+        if let Some(sym) = file.symbols(&mut qc).find(|s| s.name == name) {
             return Ok(Some(lsp_types::Location {
                 uri,
                 range: to_lsp_range(sym.range),
@@ -220,10 +223,7 @@ impl Workspace {
             } else {
                 name.to_string()
             };
-            if let Some(sym) = file
-                .symbols(&mut qc)
-                .find(|sym| sym.full_name() == expected_name)
-            {
+            if let Some(sym) = file.symbols(&mut qc).find(|sym| sym.name == expected_name) {
                 return Ok(Some(lsp_types::Location {
                     uri,
                     range: to_lsp_range(sym.range),
@@ -309,11 +309,11 @@ fn to_lsp_range(r: tree_sitter::Range) -> lsp_types::Range {
     }
 }
 
-fn to_lsp_symbol(uri: Url, sym: &file::Symbol) -> lsp_types::SymbolInformation {
+fn to_lsp_symbol(uri: Url, sym: file::Symbol) -> lsp_types::SymbolInformation {
     // deprecated field is deprecated, but cannot be omitted
     #[allow(deprecated)]
     lsp_types::SymbolInformation {
-        name: sym.full_name(),
+        name: sym.name,
         kind: match sym.kind {
             file::SymbolKind::Enum => lsp_types::SymbolKind::ENUM,
             file::SymbolKind::Message => lsp_types::SymbolKind::STRUCT,
@@ -327,6 +327,6 @@ fn to_lsp_symbol(uri: Url, sym: &file::Symbol) -> lsp_types::SymbolInformation {
                 end: to_lsp_pos(sym.range.end_point),
             },
         },
-        container_name: sym.parent.clone(),
+        container_name: None,
     }
 }

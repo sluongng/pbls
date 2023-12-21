@@ -46,7 +46,7 @@ fn diag(uri: Url, target: &str, message: &str) -> Diagnostic {
     }
 }
 
-fn sym(uri: Url, parent: Option<&str>, name: &str, text: &str) -> SymbolInformation {
+fn sym(uri: Url, name: &str, text: &str) -> SymbolInformation {
     let kind = text
         .split_once(" ")
         .unwrap_or_else(|| panic!("Invalid symbol {text}"))
@@ -63,7 +63,7 @@ fn sym(uri: Url, parent: Option<&str>, name: &str, text: &str) -> SymbolInformat
         tags: None,
         deprecated: None,
         location: locate(uri, text),
-        container_name: parent.map(Into::into),
+        container_name: None,
     }
 }
 
@@ -413,11 +413,11 @@ fn test_document_symbols() -> pbls::Result<()> {
     assert_elements_equal(
         actual,
         vec![
-            sym(base_uri(), None, "Thing", "enum Thing"),
-            sym(base_uri(), None, "Foo", "message Foo"),
-            sym(base_uri(), Some("Foo"), "Foo.Buz", "message Buz"),
-            sym(base_uri(), None, "Bar", "message Bar"),
-            sym(base_uri(), None, "Empty", "message Empty"),
+            sym(base_uri(), "Thing", "enum Thing"),
+            sym(base_uri(), "Foo", "message Foo"),
+            sym(base_uri(), "Foo.Buz", "message Buz"),
+            sym(base_uri(), "Bar", "message Bar"),
+            sym(base_uri(), "Empty", "message Empty"),
         ],
         |s| s.name.clone(),
     );
@@ -443,18 +443,18 @@ fn test_workspace_symbols() -> pbls::Result<()> {
         panic!("Symbols response is not Flat")
     };
     let expected = vec![
-        sym(other_uri(), None, "Other", "message Other"),
-        sym(dep_uri(), None, "Dep", "message Dep"),
-        sym(dep_uri(), None, "Dep2", "enum Dep2"),
-        sym(base_uri(), None, "Thing", "enum Thing"),
-        sym(base_uri(), None, "Foo", "message Foo"),
-        sym(base_uri(), Some("Foo"), "Foo.Buz", "message Buz"),
-        sym(base_uri(), None, "Bar", "message Bar"),
-        sym(base_uri(), None, "Empty", "message Empty"),
-        sym(other_uri(), Some("Other"), "Other.Nested", "message Nested"),
-        sym(error_uri(), None, "Nope", "enum Nope"),
-        sym(error_uri(), None, "Nah", "message Nah"),
-        sym(error_uri(), None, "Noo", "message Noo"),
+        sym(other_uri(), "Other", "message Other"),
+        sym(dep_uri(), "Dep", "message Dep"),
+        sym(dep_uri(), "Dep2", "enum Dep2"),
+        sym(base_uri(), "Thing", "enum Thing"),
+        sym(base_uri(), "Foo", "message Foo"),
+        sym(base_uri(), "Foo.Buz", "message Buz"),
+        sym(base_uri(), "Bar", "message Bar"),
+        sym(base_uri(), "Empty", "message Empty"),
+        sym(other_uri(), "Other.Nested", "message Nested"),
+        sym(error_uri(), "Nope", "enum Nope"),
+        sym(error_uri(), "Nah", "message Nah"),
+        sym(error_uri(), "Noo", "message Noo"),
     ];
     assert_elements_equal(actual, expected, |s| s.name.clone());
     Ok(())
@@ -716,8 +716,7 @@ fn test_complete_type() -> pbls::Result<()> {
                 ..Default::default()
             },
             CompletionItem {
-                // BUG: Should be Foo.Buz
-                label: "Buz".into(),
+                label: "Foo.Buz".into(),
                 kind: Some(CompletionItemKind::STRUCT),
                 ..Default::default()
             },
@@ -743,7 +742,7 @@ fn test_complete_type() -> pbls::Result<()> {
             },
             CompletionItem {
                 // BUG: Should be other.Other.Nested
-                label: "Nested".into(),
+                label: "Other.Nested".into(),
                 kind: Some(CompletionItemKind::STRUCT),
                 ..Default::default()
             },

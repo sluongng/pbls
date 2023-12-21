@@ -17,16 +17,7 @@ pub enum SymbolKind {
 pub struct Symbol {
     pub kind: SymbolKind,
     pub name: String,
-    pub parent: Option<String>,
     pub range: tree_sitter::Range,
-}
-
-impl Symbol {
-    pub fn full_name(&self) -> String {
-        self.parent.as_ref().map_or(self.name.clone(), |p| {
-            p.to_string() + "." + self.name.as_str()
-        })
-    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -113,15 +104,37 @@ impl File {
 
         qc.matches(&query, self.tree.root_node(), self.text.as_bytes())
             .map(|m| (m.captures[0].node, m.captures[1].node))
-            .map(|(def, id)| Symbol {
-                kind: match def.kind() {
-                    "message" => SymbolKind::Message,
-                    _ => SymbolKind::Enum,
-                },
-                name: self.get_text(id).into(),
-                parent: parent_name(def, self.text.as_bytes()),
-                range: def.range(),
+            .map(|(def, id)| {
+                let name = self.get_text(id);
+                let name = if let Some(p) = parent_name(def, self.text.as_bytes()) {
+                    p + "." + name
+                } else {
+                    name.to_string()
+                };
+                Symbol {
+                    kind: match def.kind() {
+                        "message" => SymbolKind::Message,
+                        _ => SymbolKind::Enum,
+                    },
+                    name,
+                    range: def.range(),
+                }
             })
+    }
+
+    // Return all symbols adjusted relative to a message.
+    // For example, given base_name=Foo.Bar:
+    // symbols()          -> [Foo, Foo.Bar, Foo.Bar.Baz, Foo.Bar.Baz.Biz]
+    // relative_symbols() -> [Foo, Bar    , Baz        , Baz.Biz]
+    pub fn relative_symbols<'this: 'cursor, 'cursor>(
+        &'this self,
+        base_name: &'this str,
+        qc: &'cursor mut tree_sitter::QueryCursor,
+    ) -> impl Iterator<Item = Symbol> + 'cursor {
+        self.symbols(qc).map(|s| Symbol {
+            name: relative_name(base_name, &s.name),
+            ..s
+        })
     }
 
     // Given an "ident" or "enumMessageType", node representing a type, find the name of the type.
@@ -414,7 +427,6 @@ mod tests {
                 Symbol {
                     kind: SymbolKind::Message,
                     name: "Foo".into(),
-                    parent: None,
                     range: tree_sitter::Range {
                         start_byte: 69,
                         end_byte: 82,
@@ -425,7 +437,6 @@ mod tests {
                 Symbol {
                     kind: SymbolKind::Enum,
                     name: "Bar".into(),
-                    parent: None,
                     range: tree_sitter::Range {
                         start_byte: 95,
                         end_byte: 105,
@@ -436,7 +447,6 @@ mod tests {
                 Symbol {
                     kind: SymbolKind::Message,
                     name: "Baz".into(),
-                    parent: None,
                     range: tree_sitter::Range {
                         start_byte: 118,
                         end_byte: 174,
@@ -446,8 +456,68 @@ mod tests {
                 },
                 Symbol {
                     kind: SymbolKind::Message,
-                    name: "Biz".into(),
-                    parent: Some("Baz".into()),
+                    name: "Baz.Biz".into(),
+                    range: tree_sitter::Range {
+                        start_byte: 147,
+                        end_byte: 160,
+                        start_point: tree_sitter::Point { row: 6, column: 16 },
+                        end_point: tree_sitter::Point { row: 6, column: 29 },
+                    },
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn test_relative_symbols() {
+        logger::init(log::Level::Trace);
+        let text = r#"
+            syntax="proto3"; 
+            package main;
+            message Foo{}
+            enum Bar{}
+            message Baz{
+                message Biz{}
+            }
+        "#;
+        let file = File::new(text.to_string()).unwrap();
+        let mut qc = tree_sitter::QueryCursor::new();
+        assert_eq!(
+            file.relative_symbols("Foo", &mut qc).collect::<Vec<_>>(),
+            vec![
+                Symbol {
+                    kind: SymbolKind::Message,
+                    name: "Foo".into(),
+                    range: tree_sitter::Range {
+                        start_byte: 69,
+                        end_byte: 82,
+                        start_point: tree_sitter::Point { row: 3, column: 12 },
+                        end_point: tree_sitter::Point { row: 3, column: 25 },
+                    },
+                },
+                Symbol {
+                    kind: SymbolKind::Enum,
+                    name: "Bar".into(),
+                    range: tree_sitter::Range {
+                        start_byte: 95,
+                        end_byte: 105,
+                        start_point: tree_sitter::Point { row: 4, column: 12 },
+                        end_point: tree_sitter::Point { row: 4, column: 22 },
+                    },
+                },
+                Symbol {
+                    kind: SymbolKind::Message,
+                    name: "Baz".into(),
+                    range: tree_sitter::Range {
+                        start_byte: 118,
+                        end_byte: 174,
+                        start_point: tree_sitter::Point { row: 5, column: 12 },
+                        end_point: tree_sitter::Point { row: 7, column: 13 },
+                    },
+                },
+                Symbol {
+                    kind: SymbolKind::Message,
+                    name: "Baz.Biz".into(),
                     range: tree_sitter::Range {
                         start_byte: 147,
                         end_byte: 160,
