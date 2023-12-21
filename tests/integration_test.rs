@@ -741,14 +741,8 @@ fn test_complete_type() -> pbls::Result<()> {
                 ..Default::default()
             },
             CompletionItem {
-                label: "Other".into(),
-                kind: Some(CompletionItemKind::STRUCT),
-                ..Default::default()
-            },
-            CompletionItem {
-                // BUG: Should be other.Other.Nested
-                label: "Other.Nested".into(),
-                kind: Some(CompletionItemKind::STRUCT),
+                label: "other".into(),
+                kind: Some(CompletionItemKind::MODULE),
                 ..Default::default()
             },
         ],
