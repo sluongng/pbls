@@ -130,7 +130,7 @@ impl Workspace {
             .get(uri)
             .ok_or("Completion requested on file with no tree for {uri}")?;
         match file.completion_context(line, character)? {
-            Some(file::CompletionContext::Message(_)) => self.complete_types(uri),
+            Some(file::CompletionContext::Message(msg)) => self.complete_types(&msg, file),
             Some(file::CompletionContext::Enum(_)) => Ok(None), // TODO
             Some(file::CompletionContext::Keyword) => Ok(complete_keywords()),
             Some(file::CompletionContext::Import) => self.complete_imports(uri),
@@ -233,31 +233,29 @@ impl Workspace {
         Ok(None)
     }
 
-    fn complete_types(&self, uri: &Url) -> Result<Option<lsp_types::CompletionResponse>> {
-        let file = self.get(uri)?;
+    fn complete_types(
+        &self,
+        base_name: &str,
+        file: &file::File,
+    ) -> Result<Option<lsp_types::CompletionResponse>> {
         let mut qc = QueryCursor::new();
+        let mut items: Vec<_> = file
+            .relative_symbols(base_name, &mut qc)
+            .map(to_lsp_completion)
+            .collect();
+
         let imports = file
             .imports(&mut qc)
             .filter_map(|name| self.find_import(name))
             .map(|path| Url::from_file_path(path).unwrap())
             .map(|uri| self.get(&uri).unwrap());
-        let files = std::iter::once(file).chain(imports);
 
-        let mut items = vec![];
-        for file in files {
+        for file in imports {
             let mut qc = tree_sitter::QueryCursor::new();
-            items.extend(file.symbols(&mut qc).map(|s| lsp_types::CompletionItem {
-                label: s.name.clone(),
-                label_details: None,
-                kind: Some(match s.kind {
-                    file::SymbolKind::Enum => lsp_types::CompletionItemKind::ENUM,
-                    _ => lsp_types::CompletionItemKind::STRUCT,
-                }),
-                ..Default::default()
-            }));
+            items.extend(file.symbols(&mut qc).map(to_lsp_completion));
         }
 
-        let keywords = ["message", "enum"].map(|s| lsp_types::CompletionItem {
+        let keywords = ["message", "enum", "repeated"].map(|s| lsp_types::CompletionItem {
             label: s.to_string(),
             kind: Some(lsp_types::CompletionItemKind::KEYWORD),
             ..Default::default()
@@ -328,5 +326,16 @@ fn to_lsp_symbol(uri: Url, sym: file::Symbol) -> lsp_types::SymbolInformation {
             },
         },
         container_name: None,
+    }
+}
+
+fn to_lsp_completion(sym: file::Symbol) -> lsp_types::CompletionItem {
+    lsp_types::CompletionItem {
+        label: sym.name,
+        kind: Some(match sym.kind {
+            file::SymbolKind::Enum => lsp_types::CompletionItemKind::ENUM,
+            file::SymbolKind::Message => lsp_types::CompletionItemKind::STRUCT,
+        }),
+        ..Default::default()
     }
 }

@@ -701,6 +701,11 @@ fn test_complete_type() -> pbls::Result<()> {
                 ..Default::default()
             },
             CompletionItem {
+                label: "repeated".into(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                ..Default::default()
+            },
+            CompletionItem {
                 label: "Bar".into(),
                 kind: Some(CompletionItemKind::STRUCT),
                 ..Default::default()
