@@ -711,17 +711,17 @@ fn test_complete_type() -> pbls::Result<()> {
                 ..Default::default()
             },
             CompletionItem {
+                label: "Buz".into(),
+                kind: Some(CompletionItemKind::STRUCT),
+                ..Default::default()
+            },
+            CompletionItem {
                 label: "Empty".into(),
                 kind: Some(CompletionItemKind::STRUCT),
                 ..Default::default()
             },
             CompletionItem {
                 label: "Foo".into(),
-                kind: Some(CompletionItemKind::STRUCT),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "Foo.Buz".into(),
                 kind: Some(CompletionItemKind::STRUCT),
                 ..Default::default()
             },
