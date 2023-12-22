@@ -240,7 +240,6 @@ impl Workspace {
     ) -> Result<Option<lsp_types::CompletionResponse>> {
         let current_package = file.package();
         let mut qc = QueryCursor::new();
-        let mut packages = std::collections::HashSet::<&str>::new();
         let mut items: Vec<_> = file
             .relative_symbols(base_name, &mut qc)
             .map(to_lsp_completion)
@@ -258,16 +257,16 @@ impl Workspace {
                 let mut qc = tree_sitter::QueryCursor::new();
                 items.extend(file.symbols(&mut qc).map(to_lsp_completion));
             } else if let Some(package) = package {
-                packages.insert(package);
+                let mut qc = tree_sitter::QueryCursor::new();
+                items.extend(
+                    file.symbols(&mut qc)
+                        .map(|s| file::Symbol {
+                            name: package.to_owned() + "." + &s.name,
+                            ..s
+                        })
+                        .map(to_lsp_completion),
+                );
             }
-        }
-
-        for pkg in packages {
-            items.push(lsp_types::CompletionItem {
-                label: pkg.into(),
-                kind: Some(lsp_types::CompletionItemKind::MODULE),
-                ..Default::default()
-            });
         }
 
         let keywords = ["message", "enum", "repeated"].map(|s| lsp_types::CompletionItem {

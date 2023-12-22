@@ -741,8 +741,13 @@ fn test_complete_type() -> pbls::Result<()> {
                 ..Default::default()
             },
             CompletionItem {
-                label: "other".into(),
-                kind: Some(CompletionItemKind::MODULE),
+                label: "other.Other".into(),
+                kind: Some(CompletionItemKind::STRUCT),
+                ..Default::default()
+            },
+            CompletionItem {
+                label: "other.Other.Nested".into(),
+                kind: Some(CompletionItemKind::STRUCT),
                 ..Default::default()
             },
         ],
