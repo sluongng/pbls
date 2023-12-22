@@ -21,9 +21,9 @@ pub struct Symbol {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum CompletionContext {
-    Message(String),
-    Enum(String),
+pub enum CompletionContext<'a> {
+    Message(&'a str),
+    Enum(&'a str),
     Import,
     Keyword,
 }
@@ -106,7 +106,7 @@ impl File {
             .map(|m| (m.captures[0].node, m.captures[1].node))
             .map(|(def, id)| {
                 let name = self.get_text(id);
-                let name = if let Some(p) = parent_name(def, self.text.as_bytes()) {
+                let name = if let Some(p) = self.parent_name(def) {
                     p + "." + name
                 } else {
                     name.to_string()
@@ -159,11 +159,11 @@ impl File {
             Some(n) if n.kind() == "fieldName" => None,
             Some(n) if n.kind() == "enumBody" => n
                 .parent() // enum
-                .and_then(|p| type_name(p, self.text.as_bytes()))
+                .and_then(|p| self.type_name(p))
                 .and_then(|n| Some(CompletionContext::Enum(n))),
             Some(n) if n.kind() == "messageBody" => n
                 .parent() // message
-                .and_then(|p| type_name(p, self.text.as_bytes()))
+                .and_then(|p| self.type_name(p))
                 .and_then(|n| Some(CompletionContext::Message(n))),
             Some(n) => self.parent_context(n.parent()),
         }
@@ -248,41 +248,39 @@ impl File {
 
         None
     }
-}
 
-fn parent_name(node: tree_sitter::Node, text: &[u8]) -> Option<String> {
-    let mut node = node;
-    let mut res = Vec::<String>::new();
-    loop {
-        if let Some(parent) = node.parent() {
-            if parent.kind() == "message" {
-                type_name(parent, text).map(|n| res.push(n));
+    fn parent_name(&self, node: tree_sitter::Node) -> Option<String> {
+        let mut node = node;
+        let mut res = Vec::<&str>::new();
+        loop {
+            if let Some(parent) = node.parent() {
+                if parent.kind() == "message" {
+                    self.type_name(parent).map(|n| res.push(n));
+                }
+                node = parent;
+            } else {
+                break;
             }
-            node = parent;
+        }
+        if res.is_empty() {
+            None
         } else {
-            break;
+            Some(res.join("."))
         }
     }
-    if res.is_empty() {
-        None
-    } else {
-        Some(res.join("."))
-    }
-}
 
-// Get the name of a Enum or Message node.
-fn type_name(node: tree_sitter::Node, text: &[u8]) -> Option<String> {
-    debug_assert!(
-        node.kind() == "enum" || node.kind() == "message",
-        "{node:?}"
-    );
-    let mut cursor = node.walk();
-    let child = node
-        .named_children(&mut cursor)
-        .find(|c| c.kind() == "messageName" || c.kind() == "enumName");
-    child
-        .and_then(|c| c.utf8_text(text).ok())
-        .map(|s| s.to_string())
+    // Get the name of a Enum or Message node.
+    fn type_name(&self, node: tree_sitter::Node) -> Option<&str> {
+        debug_assert!(
+            node.kind() == "enum" || node.kind() == "message",
+            "{node:?}"
+        );
+        let mut cursor = node.walk();
+        let child = node
+            .named_children(&mut cursor)
+            .find(|c| c.kind() == "messageName" || c.kind() == "enumName");
+        child.and_then(|c| c.utf8_text(self.text.as_bytes()).ok())
+    }
 }
 
 fn is_top_level_error(node: tree_sitter::Node) -> bool {
@@ -571,12 +569,12 @@ mod tests {
                 Some(CompletionContext::Keyword),
                 None,
                 Some(CompletionContext::Import),
-                Some(CompletionContext::Message("Foo".into())),
-                Some(CompletionContext::Message("Buz".into())),
-                Some(CompletionContext::Message("Bar".into())),
+                Some(CompletionContext::Message("Foo")),
+                Some(CompletionContext::Message("Buz")),
+                Some(CompletionContext::Message("Bar")),
                 Some(CompletionContext::Keyword),
                 None,
-                Some(CompletionContext::Enum("Enum".into())),
+                Some(CompletionContext::Enum("Enum")),
                 None,
             ]
         );
@@ -661,15 +659,15 @@ mod tests {
         test(&["message Foo{ | }", ""], None);
         test(
             &["message Foo{ B| }", ""],
-            Some(CompletionContext::Message("Foo".into())),
+            Some(CompletionContext::Message("Foo")),
         );
         test(
             &["message Foo{ B|ar }", ""],
-            Some(CompletionContext::Message("Foo".into())),
+            Some(CompletionContext::Message("Foo")),
         );
         test(
             &["message Foo{ s|tring }", ""],
-            Some(CompletionContext::Message("Foo".into())),
+            Some(CompletionContext::Message("Foo")),
         );
         test(&["message Foo{ Bar | }"], None);
         test(&["message Foo{ Bar b| }"], None);
