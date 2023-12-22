@@ -61,20 +61,32 @@ impl File {
             let range = change
                 .range
                 .ok_or("No range in change notification {change:?}")?;
-            let start_char = self.text.lines().take(range.start.line.try_into()?).count()
+            let start_byte = self
+                .text
+                .split_inclusive("\n")
+                .take(range.start.line.try_into()?)
+                .map(str::len)
+                .sum::<usize>()
                 + usize::try_from(range.start.character)?;
             // TODO: start from start
-            let end_char = self.text.lines().take(range.end.line.try_into()?).count()
+            let end_byte = self
+                .text
+                .split_inclusive("\n")
+                .take(range.end.line.try_into()?)
+                .map(str::len)
+                .sum::<usize>()
                 + usize::try_from(range.end.character)?;
 
             log::trace!(
-                "Computing change from {start_char} to {end_char} with text {}",
+                "Computing change {start_byte}..{end_byte} with text {}",
                 change.text
             );
 
-            self.text = self.text[0..start_char].to_string()
+            log::trace!("Editing text {}", self.text);
+
+            self.text = self.text[0..start_byte].to_string()
                 + change.text.as_str()
-                + &self.text[end_char..];
+                + &self.text[end_byte..];
 
             log::trace!("Edited text to {}", self.text);
         }
@@ -806,11 +818,15 @@ mod tests {
         file.edit(vec![change((0, 0), (0, 0), "s")]).unwrap();
         assert_eq!(file.text, "syn");
 
-        file.edit(vec![change((0, 3), (0, 3), "tax = pruto")])
+        file.edit(vec![change((0, 3), (0, 3), "tax = \"proto2\";\n")])
             .unwrap();
-        assert_eq!(file.text, "syntax = pruto");
+        assert_eq!(file.text, "syntax = \"proto2\";\n");
 
-        file.edit(vec![change((0, 9), (0, 14), "proto")]).unwrap();
-        assert_eq!(file.text, "syntax = proto");
+        file.edit(vec![change((0, 10), (0, 16), "proto3")]).unwrap();
+        assert_eq!(file.text, "syntax = \"proto3\";\n");
+
+        file.edit(vec![change((1, 0), (1, 0), "message Foo {}")])
+            .unwrap();
+        assert_eq!(file.text, "syntax = \"proto3\";\nmessage Foo {}");
     }
 }
