@@ -51,6 +51,40 @@ impl File {
         Ok(File { tree, text })
     }
 
+    pub fn edit(&mut self, changes: Vec<lsp_types::TextDocumentContentChangeEvent>) -> Result<()> {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(language())
+            .expect("Error loading proto language");
+
+        for change in changes {
+            let range = change
+                .range
+                .ok_or("No range in change notification {change:?}")?;
+            let start_char = self.text.lines().take(range.start.line.try_into()?).count()
+                + usize::try_from(range.start.character)?;
+            // TODO: start from start
+            let end_char = self.text.lines().take(range.end.line.try_into()?).count()
+                + usize::try_from(range.end.character)?;
+
+            log::trace!(
+                "Computing change from {start_char} to {end_char} with text {}",
+                change.text
+            );
+
+            self.text = self.text[0..start_char].to_string()
+                + change.text.as_str()
+                + &self.text[end_char..];
+
+            log::trace!("Edited text to {}", self.text);
+        }
+
+        self.tree = parser.parse(&self.text, None).ok_or("Parse failed")?;
+        log::trace!("Edited text: {}", self.text);
+        log::trace!("Edited: {}", self.tree.root_node().to_sexp());
+        Ok(())
+    }
+
     fn get_text(&self, node: tree_sitter::Node) -> &str {
         node.utf8_text(self.text.as_bytes()).unwrap()
     }
@@ -741,5 +775,42 @@ mod tests {
         assert_eq!(relative_name("Foo", "Foo.Bar.Baz"), "Bar.Baz");
         assert_eq!(relative_name("Foo", "Foo.Bar"), "Bar");
         assert_eq!(relative_name("Foo", "Foo"), "Foo");
+    }
+
+    #[test]
+    fn test_edit() {
+        let text = "yn";
+        let mut file = File::new(text.into()).unwrap();
+        assert_eq!(file.text, text);
+
+        let change = |(start_line, start_char), (end_line, end_char), text: &str| {
+            lsp_types::TextDocumentContentChangeEvent {
+                range: Some(lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: start_line,
+                        character: start_char,
+                    },
+                    end: lsp_types::Position {
+                        line: end_line,
+                        character: end_char,
+                    },
+                }),
+                range_length: None,
+                text: text.into(),
+            }
+        };
+
+        file.edit(vec![]).unwrap();
+        assert_eq!(file.text, text);
+
+        file.edit(vec![change((0, 0), (0, 0), "s")]).unwrap();
+        assert_eq!(file.text, "syn");
+
+        file.edit(vec![change((0, 3), (0, 3), "tax = pruto")])
+            .unwrap();
+        assert_eq!(file.text, "syntax = pruto");
+
+        file.edit(vec![change((0, 9), (0, 14), "proto")]).unwrap();
+        assert_eq!(file.text, "syntax = proto");
     }
 }
