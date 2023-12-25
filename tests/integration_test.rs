@@ -687,69 +687,68 @@ fn test_complete_type() -> pbls::Result<()> {
         panic!("Unexpected completion response {resp:?}");
     };
 
+    let keyword = |name: &str| CompletionItem {
+        label: name.into(),
+        kind: Some(CompletionItemKind::KEYWORD),
+        ..Default::default()
+    };
+
+    let _struct = |name: &str| CompletionItem {
+        label: name.into(),
+        kind: Some(CompletionItemKind::STRUCT),
+        ..Default::default()
+    };
+
+    let _enum = |name: &str| CompletionItem {
+        label: name.into(),
+        kind: Some(CompletionItemKind::ENUM),
+        ..Default::default()
+    };
+
     assert_elements_equal(
         actual,
         vec![
-            CompletionItem {
-                label: "message".into(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "enum".into(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "repeated".into(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "Bar".into(),
-                kind: Some(CompletionItemKind::STRUCT),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "Buz".into(),
-                kind: Some(CompletionItemKind::STRUCT),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "Empty".into(),
-                kind: Some(CompletionItemKind::STRUCT),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "Foo".into(),
-                kind: Some(CompletionItemKind::STRUCT),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "Thing".into(),
-                kind: Some(CompletionItemKind::ENUM),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "Dep".into(),
-                kind: Some(CompletionItemKind::STRUCT),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "Dep2".into(),
-                kind: Some(CompletionItemKind::ENUM),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "other.Other".into(),
-                kind: Some(CompletionItemKind::STRUCT),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "other.Other.Nested".into(),
-                kind: Some(CompletionItemKind::STRUCT),
-                ..Default::default()
-            },
+            keyword("enum"),
+            keyword("extend"),
+            keyword("import"),
+            keyword("map"),
+            keyword("message"),
+            keyword("oneof"),
+            keyword("option"),
+            keyword("optional"),
+            keyword("package"),
+            keyword("repeated"),
+            keyword("reserved"),
+            keyword("returns"),
+            keyword("rpc"),
+            keyword("service"),
+            keyword("stream"),
+            keyword("syntax"),
+            keyword("to"),
+            _struct("bool"),
+            _struct("bytes"),
+            _struct("double"),
+            _struct("fixed32"),
+            _struct("fixed64"),
+            _struct("float"),
+            _struct("int32"),
+            _struct("int64"),
+            _struct("sfixed32"),
+            _struct("sfixed64"),
+            _struct("sint32"),
+            _struct("sint64"),
+            _struct("string"),
+            _struct("uint32"),
+            _struct("uint64"),
+            _struct("Bar"),
+            _struct("Buz"),
+            _struct("Empty"),
+            _struct("Foo"),
+            _enum("Thing"),
+            _struct("Dep"),
+            _enum("Dep2"),
+            _struct("other.Other"),
+            _struct("other.Other.Nested"),
         ],
         |s| s.label.clone(),
     );

@@ -269,7 +269,22 @@ impl Workspace {
             }
         }
 
-        let keywords = ["message", "enum", "repeated"].map(|s| lsp_types::CompletionItem {
+        let builtins = [
+            "bool", "bytes", "double", "fixed32", "fixed64", "float", "int32", "int64", "sfixed32",
+            "sfixed64", "sint32", "sint64", "string", "uint32", "uint64",
+        ]
+        .map(|s| lsp_types::CompletionItem {
+            label: s.to_string(),
+            kind: Some(lsp_types::CompletionItemKind::STRUCT),
+            ..Default::default()
+        });
+        items.extend(builtins);
+
+        let keywords = [
+            "enum", "extend", "import", "message", "oneof", "option", "optional", "package",
+            "repeated", "reserved", "returns", "rpc", "service", "stream", "syntax", "to", "map",
+        ]
+        .map(|s| lsp_types::CompletionItem {
             label: s.to_string(),
             kind: Some(lsp_types::CompletionItemKind::KEYWORD),
             ..Default::default()
