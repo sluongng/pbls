@@ -62,21 +62,19 @@ impl File {
             let range = change
                 .range
                 .ok_or("No range in change notification {change:?}")?;
-            let start_byte = self
-                .text
-                .split_inclusive("\n")
+            let mut lines = self.text.split_inclusive("\n");
+            let start_byte = lines
+                .by_ref()
                 .take(range.start.line.try_into()?)
                 .map(str::len)
                 .sum::<usize>()
                 + usize::try_from(range.start.character)?;
-            // TODO: start from start
-            let end_byte = self
-                .text
-                .split_inclusive("\n")
-                .take(range.end.line.try_into()?)
-                .map(str::len)
-                .sum::<usize>()
-                + usize::try_from(range.end.character)?;
+            let end_byte = start_byte
+                + lines
+                    .take((range.end.line - range.start.line).try_into()?)
+                    .map(str::len)
+                    .sum::<usize>()
+                + usize::try_from(range.end.character - range.start.character)?;
 
             log::trace!(
                 "Computing change {start_byte}..{end_byte} with text {}",
