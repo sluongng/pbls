@@ -567,15 +567,17 @@ fn test_complete_import() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
     client.open(base_uri())?;
 
-    let text = vec![
-        "syntax = \"proto3\";",
-        "import \"other.proto\";",
-        "import \"",
-    ]
-    .join("\n");
+    let loc = locate(base_uri(), "import \"other.proto\"");
+    let pos = lsp_types::Position {
+        line: loc.range.start.line + 1,
+        character: 0,
+    };
     let change = TextDocumentContentChangeEvent {
-        text: text.into(),
-        range: None,
+        text: "import \"".into(),
+        range: Some(lsp_types::Range {
+            start: pos,
+            end: pos,
+        }),
         range_length: None,
     };
     client.notify::<DidChangeTextDocument>(DidChangeTextDocumentParams {
@@ -586,13 +588,11 @@ fn test_complete_import() -> pbls::Result<()> {
         content_changes: vec![change],
     })?;
 
-    let resp = client.request::<Completion>(completion_params(
-        base_uri(),
-        Position {
-            line: 2,
-            character: "import ".len().try_into().unwrap(),
-        },
-    ))?;
+    let pos = lsp_types::Position {
+        line: loc.range.start.line + 1,
+        character: "import \"".len().try_into().unwrap(),
+    };
+    let resp = client.request::<Completion>(completion_params(base_uri(), pos))?;
 
     let Some(lsp_types::CompletionResponse::Array(actual)) = resp else {
         panic!("Unexpected completion response {resp:?}");
@@ -600,22 +600,15 @@ fn test_complete_import() -> pbls::Result<()> {
 
     // excludes simple.proto (the current file)
     // excludes other.proto (already imported)
+    // excludes dep.proto (already imported)
     assert_elements_equal(
         actual,
-        vec![
-            CompletionItem {
-                label: "dep.proto".into(),
-                kind: Some(CompletionItemKind::FILE),
-                insert_text: Some("dep.proto\";".into()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "error.proto".into(),
-                kind: Some(CompletionItemKind::FILE),
-                insert_text: Some("error.proto\";".into()),
-                ..Default::default()
-            },
-        ],
+        vec![CompletionItem {
+            label: "error.proto".into(),
+            kind: Some(CompletionItemKind::FILE),
+            insert_text: Some("error.proto\";".into()),
+            ..Default::default()
+        }],
         |s| s.label.clone(),
     );
 
