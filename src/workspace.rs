@@ -76,8 +76,17 @@ impl Workspace {
         self.open(uri, text)
     }
 
-    pub fn edit(&mut self, uri: &Url, text: String) -> Result<Vec<lsp_types::Diagnostic>> {
-        self.open(uri.clone(), text)
+    pub fn edit(
+        &mut self,
+        uri: &Url,
+        changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
+    ) -> Result<()> {
+        log::trace!("edit");
+        self.files
+            .get_mut(uri)
+            .ok_or(format!("File not loaded: {uri}"))?
+            .edit(changes)
+            .into()
     }
 
     pub fn symbols(&self, uri: &Url) -> Result<Vec<SymbolInformation>> {
@@ -171,12 +180,12 @@ impl Workspace {
     ) -> Result<Option<lsp_types::Location>> {
         let file = self.get(&uri)?;
         let ctx = file.type_at(pos.line.try_into()?, pos.character.try_into()?);
-        eprintln!("Finding definition for {ctx:?}");
+        log::debug!("Finding definition for {ctx:?}");
         match ctx {
             None => Ok(None),
             Some(file::GotoContext::Type(name)) => self.find_symbol(uri, file, name),
             Some(file::GotoContext::Import(name)) => {
-                eprintln!("Looking up import {name:?}");
+                log::debug!("Looking up import {name:?}");
                 Ok(self.find_import(name).map(|path| lsp_types::Location {
                     uri: Url::from_file_path(path).unwrap(),
                     range: lsp_types::Range::default(),

@@ -52,6 +52,7 @@ impl File {
     }
 
     pub fn edit(&mut self, changes: Vec<lsp_types::TextDocumentContentChangeEvent>) -> Result<()> {
+        log::trace!("file edit");
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(language())
@@ -82,18 +83,15 @@ impl File {
                 change.text
             );
 
-            log::trace!("Editing text {}", self.text);
-
             self.text = self.text[0..start_byte].to_string()
                 + change.text.as_str()
                 + &self.text[end_byte..];
-
-            log::trace!("Edited text to {}", self.text);
         }
+        log::trace!("Edited text to: {}", self.text);
 
         self.tree = parser.parse(&self.text, None).ok_or("Parse failed")?;
-        log::trace!("Edited text: {}", self.text);
-        log::trace!("Edited: {}", self.tree.root_node().to_sexp());
+        log::trace!("Edited tree to: {}", self.tree.root_node().to_sexp());
+
         Ok(())
     }
 
@@ -355,8 +353,6 @@ fn relative_name<'a>(message: &str, name: &'a str) -> String {
         .map(|(a, _)| a)
         .collect::<Vec<_>>()
         .join(".");
-
-    eprintln!("{message}, {name}, {prefix}");
 
     if prefix.len() == name.len() {
         let Some((_, name)) = name.rsplit_once(".") else {

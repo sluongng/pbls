@@ -99,7 +99,6 @@ fn handle_workspace_symbols(
     workspace: &mut workspace::Workspace,
     _: WorkspaceSymbolParams,
 ) -> Result<Option<lsp_types::WorkspaceSymbolResponse>> {
-    eprintln!("handle workspace");
     Ok(Some(lsp_types::WorkspaceSymbolResponse::Flat(
         workspace.all_symbols()?,
     )))
@@ -170,14 +169,7 @@ fn notify_did_change(
     params: DidChangeTextDocumentParams,
 ) -> Result<Option<lsp_server::Notification>> {
     let uri = params.text_document.uri;
-    let text = params
-        .content_changes
-        .first()
-        .ok_or("Change notification missing text")?
-        .text
-        .clone();
-    workspace.edit(&uri, text)?;
-
+    workspace.edit(&uri, params.content_changes)?;
     Ok(None)
 }
 
@@ -227,8 +219,7 @@ pub fn run(connection: Connection, loglevel: log::Level) -> Result<()> {
                 save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
                     include_text: Some(true),
                 })),
-                // TODO: Support partial sync
-                change: Some(TextDocumentSyncKind::FULL),
+                change: Some(TextDocumentSyncKind::INCREMENTAL),
                 ..Default::default()
             },
         )),
@@ -248,7 +239,7 @@ pub fn run(connection: Connection, loglevel: log::Level) -> Result<()> {
     })
     .unwrap();
 
-    eprintln!("Initializing");
+    log::info!("Initializing");
     let init_params = connection.initialize(server_capabilities)?;
     let params: InitializeParams = serde_json::from_value(init_params).unwrap();
     let root = params
@@ -258,10 +249,10 @@ pub fn run(connection: Connection, loglevel: log::Level) -> Result<()> {
 
     let path = root.join(".pbls.toml");
     let conf = if path.is_file() {
-        eprintln!("Reading config from {path:?}");
+        log::info!("Reading config from {path:?}");
         toml::from_str(fs::read_to_string(path)?.as_str())?
     } else {
-        eprintln!("Using default config");
+        log::info!("Using default config");
         Config {
             proto_paths: find_import_paths(root)?,
         }
@@ -278,11 +269,11 @@ pub fn run(connection: Connection, loglevel: log::Level) -> Result<()> {
     let mut workspace = workspace::Workspace::new(proto_paths);
 
     for msg in &connection.receiver {
-        eprintln!("Handling message {msg:?}");
+        log::info!("Handling message {msg:?}");
         match msg {
             Message::Request(req) => {
                 if connection.handle_shutdown(&req)? {
-                    eprintln!("Shutting down");
+                    log::info!("Shutting down");
                     return Ok(());
                 }
                 let resp = match req.method.as_str() {

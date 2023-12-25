@@ -70,7 +70,7 @@ fn get_diagnostics(err: impl Error, file_contents: String) -> Vec<Diagnostic> {
 // Other lines do not contain location info.
 // We'll return None to skip these, as usually another line contains the location.
 fn parse_diag(diag: &str, file_contents: &String) -> Option<lsp_types::Diagnostic> {
-    eprintln!("Parsing diagnostic {diag}");
+    log::debug!("Parsing diagnostic {diag}");
     let (_, rest) = diag.split_once(".proto:")?;
     let (linestr, rest) = rest.split_once(':')?;
     let (_, msg) = rest.split_once(':')?;
