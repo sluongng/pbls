@@ -825,8 +825,67 @@ mod tests {
         file.edit(vec![change((0, 10), (0, 16), "proto3")]).unwrap();
         assert_eq!(file.text, "syntax = \"proto3\";\n");
 
-        file.edit(vec![change((1, 0), (1, 0), "message Foo {}")])
+        file.edit(vec![change((1, 0), (1, 0), "message Foo {}\n")])
             .unwrap();
-        assert_eq!(file.text, "syntax = \"proto3\";\nmessage Foo {}");
+        assert_eq!(file.text, "syntax = \"proto3\";\nmessage Foo {}\n");
+
+        file.edit(vec![change((1, 13), (1, 14), "\n\n}")]).unwrap();
+        assert_eq!(file.text, "syntax = \"proto3\";\nmessage Foo {\n\n}\n");
+
+        file.edit(vec![change(
+            (2, 0),
+            (2, 0),
+            "uint32 i = 1;\nstring s = 2;\nbytes b = 3;",
+        )])
+        .unwrap();
+        assert_eq!(
+            file.text,
+            [
+                "syntax = \"proto3\";",
+                "message Foo {",
+                "uint32 i = 1;",
+                "string s = 2;",
+                "bytes b = 3;",
+                "}",
+                ""
+            ]
+            .join("\n")
+        );
+
+        file.edit(vec![change(
+            (2, 0),
+            (5, 0),
+            "uint32 i = 2;\nstring s = 3;\nbytes b = 4;\n",
+        )])
+        .unwrap();
+        assert_eq!(
+            file.text,
+            [
+                "syntax = \"proto3\";",
+                "message Foo {",
+                "uint32 i = 2;",
+                "string s = 3;",
+                "bytes b = 4;",
+                "}",
+                ""
+            ]
+            .join("\n")
+        );
+
+        file.edit(vec![change((2, 4), (3, 8), "64 u = 2;\nstring str")])
+            .unwrap();
+        assert_eq!(
+            file.text,
+            [
+                "syntax = \"proto3\";",
+                "message Foo {",
+                "uint64 u = 2;",
+                "string str = 3;",
+                "bytes b = 4;",
+                "}",
+                ""
+            ]
+            .join("\n")
+        );
     }
 }
