@@ -303,7 +303,7 @@ impl Workspace {
 
         let keywords = [
             "enum", "extend", "import", "message", "oneof", "option", "optional", "package",
-            "repeated", "reserved", "returns", "rpc", "service", "stream", "to", "map",
+            "repeated", "reserved", "returns", "rpc", "service", "stream", "map",
         ]
         .map(|s| lsp_types::CompletionItem {
             label: s.to_string(),
@@ -395,8 +395,21 @@ mod tests {
     use super::*;
     use crate::logger;
 
+    fn setup() -> (Workspace, tempfile::TempDir) {
+        logger::init(log::Level::Trace);
+        let tmp = tempfile::tempdir().unwrap();
+        (Workspace::new(vec![tmp.path().into()]), tmp)
+    }
+
+    fn proto(tmp: &tempfile::TempDir, path: &str, lines: &[&str]) -> (Url, String) {
+        let path = tmp.path().join(path);
+        let text = lines.join("\n") + "\n";
+        std::fs::write(&path, &text).unwrap();
+        (Url::from_file_path(path).unwrap(), text)
+    }
+
     #[test]
-    fn test_complete() {
+    fn test_complete_syntax() {
         logger::init(log::Level::Trace);
         let mut ws = Workspace::new(vec![]);
         let uri = Url::from_file_path(std::env::temp_dir().join("foo.proto")).unwrap();
@@ -417,6 +430,29 @@ mod tests {
                     ..Default::default()
                 }
             ])
+        );
+    }
+
+    #[test]
+    fn test_complete_import() {
+        let (mut ws, tmp) = setup();
+        let (uri, text) = proto(
+            &tmp,
+            "foo.proto",
+            &["syntax = \"proto3\";", "import \"bar.proto\";", "import \""],
+        );
+        proto(&tmp, "bar.proto", &["syntax = \"proto3\";"]);
+        proto(&tmp, "baz.proto", &["syntax = \"proto3\";"]);
+
+        ws.open(uri.clone(), text).unwrap();
+        assert_eq!(
+            ws.complete(&uri, 2, "import \"".len()).unwrap().unwrap(),
+            lsp_types::CompletionResponse::Array(vec![lsp_types::CompletionItem {
+                label: "baz.proto".into(),
+                kind: Some(lsp_types::CompletionItemKind::FILE),
+                insert_text: Some("baz.proto\";".into()),
+                ..Default::default()
+            },])
         );
     }
 }

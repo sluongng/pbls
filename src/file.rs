@@ -235,19 +235,31 @@ impl File {
             .ok_or(format!("No descendant for range {pos:?}"))?;
 
         log::debug!(
-            "Getting completion context for node={node:?} prev={:?} parent={:?}",
-            node.prev_sibling(),
+            "Getting completion context for node={node:?} parent={:?}",
             node.parent(),
         );
 
-        if node.prev_sibling().is_some_and(|s| s.kind() == "import") {
+        log::trace!(
+            "Getting completion context for node text:\n{}",
+            self.get_text(node),
+        );
+
+        if node.is_error() && self.get_text(node).starts_with("import ") {
+            // import "| -> (ERROR)
+            Ok(Some(CompletionContext::Import))
+        } else if node.kind() == "strLit" && node.parent().is_some_and(|p| p.kind() == "import") {
+            // import "foo|.proto" -> (import (strLit))
             Ok(Some(CompletionContext::Import))
         } else if node.kind() == "ident" || node.kind() == "type" {
+            // message Foo { Bar| -> (ident)
+            // message Foo { string| -> (type (string))
             Ok(self.parent_context(Some(node)))
         } else if is_top_level_error(node) {
             // typically means we're typing the first word of a line
+            // mes| -> (source_file (ERROR (ERROR)))
             Ok(Some(CompletionContext::Keyword))
         } else if node.kind() == "source_file" {
+            // TODO: needed? Not very efficient.
             let line: String = self
                 .text
                 .lines()
@@ -641,24 +653,39 @@ mod tests {
     #[test]
     fn test_completion_context_import() {
         logger::init(log::Level::Trace);
-        let (file, points) = cursors(
+
+        let (file, pos) = cursor(
+            r#"
+            syntax = "proto3";
+            import "|
+            "#,
+        );
+        assert_eq!(
+            file.completion_context(pos.row, pos.column).unwrap(),
+            Some(CompletionContext::Import),
+        );
+
+        let (file, pos) = cursor(
             r#"
             syntax = "proto3";
             import "fo|o";
-            import "|
-            message Foo{}
             "#,
         );
-
         assert_eq!(
-            points
-                .iter()
-                .map(|p| file.completion_context(p.row, p.column).unwrap())
-                .collect::<Vec<_>>(),
-            vec![
-                Some(CompletionContext::Import),
-                Some(CompletionContext::Import),
-            ]
+            file.completion_context(pos.row, pos.column).unwrap(),
+            Some(CompletionContext::Import),
+        );
+
+        let (file, pos) = cursor(
+            r#"
+            syntax = "proto3";
+            import "foo.proto";
+            import "|
+            "#,
+        );
+        assert_eq!(
+            file.completion_context(pos.row, pos.column).unwrap(),
+            Some(CompletionContext::Import),
         );
     }
 
