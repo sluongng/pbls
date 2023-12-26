@@ -653,6 +653,11 @@ fn test_complete_keyword() -> pbls::Result<()> {
                 kind: Some(CompletionItemKind::KEYWORD),
                 ..Default::default()
             },
+            CompletionItem {
+                label: "option".into(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                ..Default::default()
+            },
         ],
         |s| s.label.clone(),
     );

@@ -27,6 +27,7 @@ pub enum CompletionContext<'a> {
     Import,
     Keyword,
     Syntax,
+    Option,
 }
 
 #[derive(Debug, PartialEq)]
@@ -244,22 +245,37 @@ impl File {
             self.get_text(node),
         );
 
-        if node.is_error() && self.get_text(node).starts_with("import ") {
+        Ok(if node.kind() == "option" {
+            // option | -> (option)
+            Some(CompletionContext::Option)
+        } else if is_sexp(node, &["optionName", "fullIdent", "ident"]) {
+            // option c| -> (option (optionName (fullIdent (ident))))
+            Some(CompletionContext::Option)
+        } else if node.is_error() && self.get_text(node).starts_with("option ") {
+            // option | -> (ERROR)
+            Some(CompletionContext::Option)
+        } else if node
+            .parent()
+            .is_some_and(|p| p.is_error() && self.get_text(p).starts_with("option "))
+        {
+            // option | -> (ERROR)
+            Some(CompletionContext::Option)
+        } else if node.is_error() && self.get_text(node).starts_with("import ") {
             // import "| -> (ERROR)
-            Ok(Some(CompletionContext::Import))
-        } else if node.kind() == "strLit" && node.parent().is_some_and(|p| p.kind() == "import") {
+            Some(CompletionContext::Import)
+        } else if is_sexp(node, &["import", "strLit"]) {
             // import "foo|.proto" -> (import (strLit))
-            Ok(Some(CompletionContext::Import))
+            Some(CompletionContext::Import)
         } else if node.kind() == "ident" || node.kind() == "type" {
             // message Foo { Bar| -> (ident)
             // message Foo { string| -> (type (string))
-            Ok(self.parent_context(Some(node)))
+            self.parent_context(Some(node))
         } else if is_top_level_error(node) {
             // typically means we're typing the first word of a line
             // mes| -> (source_file (ERROR (ERROR)))
-            Ok(Some(CompletionContext::Keyword))
+            Some(CompletionContext::Keyword)
         } else if node.kind() == "source_file" {
-            // TODO: needed? Not very efficient.
+            // NOTE: Not very efficient, but we're in a difficult spot here.
             let line: String = self
                 .text
                 .lines()
@@ -269,18 +285,21 @@ impl File {
                 .chars()
                 .take(col)
                 .collect();
+            let line = line.trim_start();
 
             log::trace!("Checking keyword completion for line {line}");
 
-            if line.trim_start().split(char::is_whitespace).count() <= 1 {
+            if line.starts_with("option ") {
+                Some(CompletionContext::Option)
+            } else if line.split(char::is_whitespace).count() <= 1 {
                 // first word of the line
-                Ok(Some(CompletionContext::Keyword))
+                Some(CompletionContext::Keyword)
             } else {
-                Ok(None)
+                None
             }
         } else {
-            Ok(None)
-        }
+            None
+        })
     }
 
     pub fn type_at(self: &Self, row: usize, col: usize) -> Option<GotoContext> {
@@ -382,6 +401,22 @@ fn relative_name<'a>(message: &str, name: &'a str) -> String {
             .strip_prefix(".")
             .unwrap_or(name)
             .to_string()
+    }
+}
+
+fn is_sexp(node: tree_sitter::Node, sexp: &[&str]) -> bool {
+    let Some((kind, rest)) = sexp.split_last() else {
+        return true; // got to end, whole sexp matched
+    };
+
+    if &node.kind() != kind {
+        return false;
+    }
+
+    if let Some(parent) = node.parent() {
+        is_sexp(parent, rest)
+    } else {
+        false
     }
 }
 
@@ -766,6 +801,30 @@ mod tests {
         test(&["message Foo{ Bar bar = 1| }"], None);
         test(&["message Foo{ Bar bar = 1|; }"], None);
         test(&["message Foo{ Bar bar = 1;| }"], None);
+    }
+
+    #[test]
+    fn test_completion_context_option() {
+        logger::init(log::Level::Trace);
+
+        fn test(lines: &[&str]) {
+            let text = format!("syntax = \"proto3\";\n{}\n", lines.join("\n"));
+            let (file, point) = cursor(text.as_str());
+            assert_eq!(
+                file.completion_context(point.row, point.column).unwrap(),
+                Some(CompletionContext::Option),
+                "text:\n{}",
+                text
+            );
+        }
+
+        test(&["option |"]);
+        test(&["option java|"]);
+        test(&["option |java"]);
+        test(&["import \"blah.proto\";", "option |java"]);
+        test(&["option |java", "import \"blah.proto\";"]);
+        test(&["message Foo{}", "option |java"]);
+        test(&["option |java", "message Foo{}"]);
     }
 
     #[test]

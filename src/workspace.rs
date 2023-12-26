@@ -8,6 +8,29 @@ use tree_sitter::QueryCursor;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+const OPTIONS: &[&str] = &[
+    "cc_enable_arenas",
+    "cc_generic_services",
+    "csharp_namespace",
+    "deprecated",
+    "features",
+    "go_package",
+    "java_generate_equals_and_hash",
+    "java_generic_services",
+    "java_multiple_files",
+    "java_outer_classname",
+    "java_package",
+    "java_string_check_utf8",
+    "objc_class_prefix",
+    "optimize_for",
+    "php_class_prefix",
+    "php_metadata_namespace",
+    "php_namespace",
+    "py_generic_services",
+    "ruby_package",
+    "swift_prefix",
+];
+
 pub struct Workspace {
     proto_paths: Vec<std::path::PathBuf>,
     files: std::collections::HashMap<Url, file::File>,
@@ -142,6 +165,18 @@ impl Workspace {
             Some(file::CompletionContext::Enum(_)) => Ok(None), // TODO
             Some(file::CompletionContext::Keyword) => Ok(complete_keywords()),
             Some(file::CompletionContext::Import) => self.complete_imports(uri),
+            Some(file::CompletionContext::Option) => {
+                Ok(Some(lsp_types::CompletionResponse::Array(
+                    OPTIONS
+                        .iter()
+                        .map(|name| lsp_types::CompletionItem {
+                            label: name.to_string(),
+                            kind: Some(lsp_types::CompletionItemKind::TEXT),
+                            ..Default::default()
+                        })
+                        .collect(),
+                )))
+            }
             Some(file::CompletionContext::Syntax) => {
                 Ok(Some(lsp_types::CompletionResponse::Array(
                     [3, 2]
@@ -332,7 +367,7 @@ impl Workspace {
 }
 
 fn complete_keywords() -> Option<lsp_types::CompletionResponse> {
-    let items = ["message", "enum", "import"]
+    let items = ["message", "enum", "import", "option"]
         .iter()
         .map(|s| lsp_types::CompletionItem {
             label: s.to_string(),
@@ -452,6 +487,35 @@ mod tests {
                 insert_text: Some("baz.proto\";".into()),
                 ..Default::default()
             },])
+        );
+    }
+
+    #[test]
+    fn test_complete_options() {
+        let (mut ws, tmp) = setup();
+        let (uri, text) = proto(
+            &tmp,
+            "foo.proto",
+            &["syntax = \"proto3\";", "import \"bar.proto\";", "option j"],
+        );
+        proto(&tmp, "bar.proto", &["syntax = \"proto3\";"]);
+        proto(&tmp, "baz.proto", &["syntax = \"proto3\";"]);
+
+        ws.open(uri.clone(), text).unwrap();
+        assert_eq!(
+            ws.complete(&uri, 2, "option j".len()).unwrap().unwrap(),
+            lsp_types::CompletionResponse::Array(
+                OPTIONS
+                    .iter()
+                    .map(|name| {
+                        lsp_types::CompletionItem {
+                            label: name.to_string(),
+                            kind: Some(lsp_types::CompletionItemKind::TEXT),
+                            ..Default::default()
+                        }
+                    })
+                    .collect()
+            )
         );
     }
 }
