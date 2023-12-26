@@ -75,7 +75,8 @@ impl File {
                     .take((range.end.line - range.start.line).try_into()?)
                     .map(str::len)
                     .sum::<usize>()
-                + usize::try_from(range.end.character - range.start.character)?;
+                + usize::try_from(range.end.character)?
+                - usize::try_from(range.start.character)?;
 
             log::trace!(
                 "Computing change {start_byte}..{end_byte} with text {}",
@@ -892,6 +893,21 @@ mod tests {
                 "message Foo {",
                 "uint64 u = 2;",
                 "string str = 3;",
+                "bytes b = 4;",
+                "}",
+                ""
+            ]
+            .join("\n")
+        );
+
+        file.edit(vec![change((3, 13), (4, 0), "5;\n")]).unwrap();
+        assert_eq!(
+            file.text,
+            [
+                "syntax = \"proto3\";",
+                "message Foo {",
+                "uint64 u = 2;",
+                "string str = 5;",
                 "bytes b = 4;",
                 "}",
                 ""
