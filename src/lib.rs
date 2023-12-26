@@ -1,6 +1,6 @@
 mod file;
 mod logger;
-mod parser;
+mod protoc;
 mod workspace;
 
 use lsp_types::notification::DidChangeTextDocument;

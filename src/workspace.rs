@@ -2,7 +2,7 @@ use std::collections::hash_map;
 
 use crate::file;
 
-use super::parser::Parser;
+use super::protoc;
 use lsp_types::{SymbolInformation, Url};
 use tree_sitter::QueryCursor;
 
@@ -10,7 +10,6 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub struct Workspace {
     proto_paths: Vec<std::path::PathBuf>,
-    parser: Parser,
     files: std::collections::HashMap<Url, file::File>,
 }
 
@@ -18,7 +17,6 @@ impl Workspace {
     pub fn new(proto_paths: Vec<std::path::PathBuf>) -> Workspace {
         Workspace {
             proto_paths: proto_paths.clone(),
-            parser: Parser::new(proto_paths),
             files: hash_map::HashMap::new(),
         }
     }
@@ -60,6 +58,7 @@ impl Workspace {
     }
 
     pub fn open(&mut self, uri: Url, text: String) -> Result<Vec<lsp_types::Diagnostic>> {
+        let diags = protoc::diags(&uri, &text, &self.proto_paths);
         let file = file::File::new(text)?;
 
         let mut qc = tree_sitter::QueryCursor::new();
@@ -69,7 +68,7 @@ impl Workspace {
         }
 
         self.files.insert(uri.clone(), file);
-        self.parser.reparse(uri)
+        diags
     }
 
     pub fn save(&mut self, uri: Url, text: String) -> Result<Vec<lsp_types::Diagnostic>> {
