@@ -26,6 +26,7 @@ pub enum CompletionContext<'a> {
     Enum(&'a str),
     Import,
     Keyword,
+    Syntax,
 }
 
 #[derive(Debug, PartialEq)]
@@ -216,6 +217,11 @@ impl File {
         row: usize,
         col: usize,
     ) -> Result<Option<CompletionContext>> {
+        if self.tree.root_node().kind() != "source_file" {
+            // If the whole document is invalid, we need to define a syntax.
+            return Ok(Some(CompletionContext::Syntax));
+        }
+
         let pos = tree_sitter::Point {
             row: row.try_into().unwrap(),
             // Generally, the node before the cursor is more interesting for context.
@@ -617,6 +623,17 @@ mod tests {
                 Some(CompletionContext::Enum("Enum")),
                 None,
             ]
+        );
+    }
+
+    #[test]
+    fn test_completion_context_syntax() {
+        logger::init(log::Level::Trace);
+        let (file, pos) = cursor("|");
+
+        assert_eq!(
+            file.completion_context(pos.row, pos.column).unwrap(),
+            Some(CompletionContext::Syntax),
         );
     }
 

@@ -143,6 +143,18 @@ impl Workspace {
             Some(file::CompletionContext::Enum(_)) => Ok(None), // TODO
             Some(file::CompletionContext::Keyword) => Ok(complete_keywords()),
             Some(file::CompletionContext::Import) => self.complete_imports(uri),
+            Some(file::CompletionContext::Syntax) => {
+                Ok(Some(lsp_types::CompletionResponse::Array(
+                    [3, 2]
+                        .iter()
+                        .map(|n| lsp_types::CompletionItem {
+                            label: format!("syntax = \"proto{n}\";"),
+                            kind: Some(lsp_types::CompletionItemKind::TEXT),
+                            ..Default::default()
+                        })
+                        .collect(),
+                )))
+            }
             None => Ok(None),
         }
     }
@@ -291,7 +303,7 @@ impl Workspace {
 
         let keywords = [
             "enum", "extend", "import", "message", "oneof", "option", "optional", "package",
-            "repeated", "reserved", "returns", "rpc", "service", "stream", "syntax", "to", "map",
+            "repeated", "reserved", "returns", "rpc", "service", "stream", "to", "map",
         ]
         .map(|s| lsp_types::CompletionItem {
             label: s.to_string(),
@@ -375,5 +387,36 @@ fn to_lsp_completion(sym: file::Symbol) -> lsp_types::CompletionItem {
             file::SymbolKind::Message => lsp_types::CompletionItemKind::STRUCT,
         }),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logger;
+
+    #[test]
+    fn test_complete() {
+        logger::init(log::Level::Trace);
+        let mut ws = Workspace::new(vec![]);
+        let uri = Url::from_file_path(std::env::temp_dir().join("foo.proto")).unwrap();
+        // TODO: This returns Error because protoc needs a file on disk.
+        // Replace with unwrap after errors are based on treesitter.
+        _ = ws.open(uri.clone(), "".into());
+        assert_eq!(
+            ws.complete(&uri, 0, 0).unwrap().unwrap(),
+            lsp_types::CompletionResponse::Array(vec![
+                lsp_types::CompletionItem {
+                    label: "syntax = \"proto3\";".into(),
+                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    ..Default::default()
+                },
+                lsp_types::CompletionItem {
+                    label: "syntax = \"proto2\";".into(),
+                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    ..Default::default()
+                }
+            ])
+        );
     }
 }

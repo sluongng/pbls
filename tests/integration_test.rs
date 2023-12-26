@@ -716,7 +716,6 @@ fn test_complete_type() -> pbls::Result<()> {
             keyword("rpc"),
             keyword("service"),
             keyword("stream"),
-            keyword("syntax"),
             keyword("to"),
             _struct("bool"),
             _struct("bytes"),
