@@ -423,7 +423,6 @@ fn is_sexp(node: tree_sitter::Node, sexp: &[&str]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logger;
 
     // Takes a string with '|' characters representing cursors.
     // Builds a file from the string with '|' removed, and returns the positions of the cursors.
@@ -467,7 +466,7 @@ mod tests {
 
     #[test]
     fn test_package() {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
         let text = r#"syntax="proto3"; package main;"#;
         let file = File::new(text.to_string()).unwrap();
         assert_eq!(file.package(), Some("main".into()));
@@ -483,7 +482,7 @@ mod tests {
 
     #[test]
     fn test_imports() {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
         let text = r#"
             syntax="proto3";
             package main;
@@ -501,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_symbols() {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
         let text = r#"
             syntax="proto3"; 
             package main;
@@ -562,7 +561,7 @@ mod tests {
 
     #[test]
     fn test_relative_symbols() {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
         let text = r#"
             syntax="proto3"; 
             package main;
@@ -623,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_completion_context() {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
         let (file, points) = cursors(
             r#"|
             synt|ax = "proto3";
@@ -676,7 +675,7 @@ mod tests {
 
     #[test]
     fn test_completion_context_syntax() {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
         let (file, pos) = cursor("|");
 
         assert_eq!(
@@ -687,7 +686,7 @@ mod tests {
 
     #[test]
     fn test_completion_context_import() {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
 
         let (file, pos) = cursor(
             r#"
@@ -726,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_completion_context_keyword() {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
 
         fn test(lines: &[&str], expected: Option<CompletionContext>) {
             let text = lines.join("\n");
@@ -763,7 +762,7 @@ mod tests {
 
     #[test]
     fn test_completion_context_message() {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
 
         fn test(lines: &[&str], expected: Option<CompletionContext>) {
             let text = format!("syntax = \"proto3\";\n{}\n", lines.join("\n"));
@@ -805,7 +804,7 @@ mod tests {
 
     #[test]
     fn test_completion_context_option() {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
 
         fn test(lines: &[&str]) {
             let text = format!("syntax = \"proto3\";\n{}\n", lines.join("\n"));
@@ -829,7 +828,7 @@ mod tests {
 
     #[test]
     fn test_type_at() {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
         let (file, points) = cursors(
             r#"
             synt|ax = "proto3";

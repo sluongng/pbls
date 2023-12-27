@@ -428,10 +428,9 @@ fn to_lsp_completion(sym: file::Symbol) -> lsp_types::CompletionItem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logger;
 
     fn setup() -> (Workspace, tempfile::TempDir) {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
         let tmp = tempfile::tempdir().unwrap();
         (Workspace::new(vec![tmp.path().into()]), tmp)
     }
@@ -445,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_complete_syntax() {
-        logger::init(log::Level::Trace);
+        let _ = env_logger::builder().is_test(true).try_init();
         let mut ws = Workspace::new(vec![]);
         let uri = Url::from_file_path(std::env::temp_dir().join("foo.proto")).unwrap();
         // TODO: This returns Error because protoc needs a file on disk.

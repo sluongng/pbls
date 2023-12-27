@@ -1,5 +1,4 @@
 mod file;
-mod logger;
 mod protoc;
 mod workspace;
 
@@ -31,7 +30,6 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 #[derive(Debug, serde::Deserialize)]
 struct Config {
     proto_paths: Vec<std::path::PathBuf>,
-    log_level: Option<log::Level>,
 }
 
 // Handle a request, returning the response to send.
@@ -236,7 +234,7 @@ pub fn run(connection: Connection) -> Result<()> {
     })
     .unwrap();
 
-    eprintln!("Initializing");
+    log::info!("Initializing");
     let init_params = connection.initialize(server_capabilities)?;
     let params: InitializeParams = serde_json::from_value(init_params).unwrap();
     let root = params
@@ -248,18 +246,15 @@ pub fn run(connection: Connection) -> Result<()> {
 
     let path = root.join(".pbls.toml");
     let conf = if path.is_file() {
-        eprintln!("Reading config from {path:?}");
+        log::info!("Reading config from {path:?}");
         toml::from_str(fs::read_to_string(path)?.as_str())?
     } else {
         log::info!("Using default config");
         Config {
             proto_paths: find_import_paths(root)?,
-            log_level: Some(log::Level::Warn),
         }
     };
-    eprintln!("Using config {:?}", conf);
-
-    logger::init(conf.log_level.unwrap_or(log::Level::Warn));
+    log::info!("Using config {:?}", conf);
 
     let proto_paths = conf
         .proto_paths

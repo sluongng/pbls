@@ -43,6 +43,11 @@ proto_paths=["some/workspace/path", "/usr/include"]
 If this is omitted, `pbls` will make a best-effort attempt to add local include paths.
 In general, prefer explicitly specifying paths.
 
+## Logging
+
+Set the environment variable `RUST_LOG` to one of ERROR, WARN, INFO, DEBUG, or TRACE.
+See [env_logger](https://docs.rs/env_logger/latest/env_logger/#enabling-logging) for more details.
+
 # Editor Setup
 
 This assumes that `pbls` and `protoc` are on your `$PATH`.
