@@ -31,6 +31,7 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 #[derive(Debug, serde::Deserialize)]
 struct Config {
     proto_paths: Vec<std::path::PathBuf>,
+    log_level: Option<log::Level>,
 }
 
 // Handle a request, returning the response to send.
@@ -205,8 +206,7 @@ fn find_import_paths(root: std::path::PathBuf) -> Result<Vec<std::path::PathBuf>
         .collect())
 }
 
-pub fn run(connection: Connection, loglevel: log::Level) -> Result<()> {
-    logger::init(loglevel);
+pub fn run(connection: Connection) -> Result<()> {
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
@@ -236,7 +236,7 @@ pub fn run(connection: Connection, loglevel: log::Level) -> Result<()> {
     })
     .unwrap();
 
-    log::info!("Initializing");
+    eprintln!("Initializing");
     let init_params = connection.initialize(server_capabilities)?;
     let params: InitializeParams = serde_json::from_value(init_params).unwrap();
     let root = params
@@ -244,17 +244,22 @@ pub fn run(connection: Connection, loglevel: log::Level) -> Result<()> {
         .map(|u| u.to_file_path().unwrap())
         .unwrap_or(std::env::current_dir().unwrap());
 
+    // TODO: merge config from init params
+
     let path = root.join(".pbls.toml");
     let conf = if path.is_file() {
-        log::info!("Reading config from {path:?}");
+        eprintln!("Reading config from {path:?}");
         toml::from_str(fs::read_to_string(path)?.as_str())?
     } else {
         log::info!("Using default config");
         Config {
             proto_paths: find_import_paths(root)?,
+            log_level: Some(log::Level::Warn),
         }
     };
-    log::info!("Using config {:?}", conf);
+    eprintln!("Using config {:?}", conf);
+
+    logger::init(conf.log_level.unwrap_or(log::Level::Warn));
 
     let proto_paths = conf
         .proto_paths

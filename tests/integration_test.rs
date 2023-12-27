@@ -180,7 +180,7 @@ impl TestClient {
     fn new_with_root(path: impl AsRef<std::path::Path>) -> Result<TestClient> {
         let (client, server) = Connection::memory();
         let thread = std::thread::spawn(|| {
-            pbls::run(server, log::Level::Trace).unwrap();
+            pbls::run(server).unwrap();
         });
         let mut client = TestClient {
             conn: client,
