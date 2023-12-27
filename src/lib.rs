@@ -7,10 +7,12 @@ use lsp_types::request::Completion;
 use lsp_types::CompletionParams;
 use lsp_types::CompletionResponse;
 use lsp_types::DidChangeTextDocumentParams;
+use lsp_types::ReferenceParams;
 use lsp_types::SaveOptions;
 use lsp_types::TextDocumentSyncKind;
 
 use lsp_server::{Connection, Message};
+use lsp_types::request::References;
 use lsp_types::request::{DocumentSymbolRequest, GotoDefinition, Request, WorkspaceSymbolRequest};
 use lsp_types::{
     notification::{DidOpenTextDocument, DidSaveTextDocument, Notification, PublishDiagnostics},
@@ -101,6 +103,13 @@ fn handle_workspace_symbols(
     Ok(Some(lsp_types::WorkspaceSymbolResponse::Flat(
         workspace.all_symbols()?,
     )))
+}
+
+fn handle_references(
+    workspace: &mut workspace::Workspace,
+    params: ReferenceParams,
+) -> Result<Option<Vec<lsp_types::Location>>> {
+    workspace.references(params)
 }
 
 fn handle_goto_definition(
@@ -208,6 +217,7 @@ pub fn run(connection: Connection) -> Result<()> {
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
         text_document_sync: Some(TextDocumentSyncCapability::Options(
             TextDocumentSyncOptions {
                 open_close: Some(true),
@@ -284,6 +294,9 @@ pub fn run(connection: Connection) -> Result<()> {
                         req,
                         handle_workspace_symbols,
                     )),
+                    References::METHOD => {
+                        Some(handle::<References>(&mut workspace, req, handle_references))
+                    }
                     GotoDefinition::METHOD => Some(handle::<GotoDefinition>(
                         &mut workspace,
                         req,

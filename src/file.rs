@@ -302,6 +302,40 @@ impl File {
         })
     }
 
+    pub fn references(self: &Self, item: &GotoContext) -> Vec<tree_sitter::Range> {
+        match item {
+            GotoContext::Type(name) => {
+                static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
+                let query = QUERY.get_or_init(|| {
+                    tree_sitter::Query::new(language(), "(field (type) @name)").unwrap()
+                });
+
+                let mut qc = tree_sitter::QueryCursor::new();
+                qc.matches(&query, self.tree.root_node(), self.text.as_bytes())
+                    .map(|m| m.captures[0].node)
+                    .inspect(|x| eprintln!("Check {x:?}: {} == {name}", self.get_text(*x)))
+                    .filter(|n| self.get_text(*n) == *name)
+                    .map(|n| n.range())
+                    .collect()
+            }
+            GotoContext::Import(name) => {
+                static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
+                let query = QUERY.get_or_init(|| {
+                    tree_sitter::Query::new(language(), "(import (strLit) @name)").unwrap()
+                });
+                eprintln!("query");
+
+                let mut qc = tree_sitter::QueryCursor::new();
+                qc.matches(&query, self.tree.root_node(), self.text.as_bytes())
+                    .map(|m| m.captures[0].node)
+                    .filter(|n| self.get_text(*n).trim_matches('"') == *name)
+                    .map(|n| n.range())
+                    .collect()
+            }
+        }
+    }
+
+    // BUG: Also return the name of a message itself
     pub fn type_at(self: &Self, row: usize, col: usize) -> Option<GotoContext> {
         log::trace!("Getting type at row: {row} col: {col}");
 
@@ -422,18 +456,21 @@ fn is_sexp(node: tree_sitter::Node, sexp: &[&str]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use tree_sitter::Point;
+
     use super::*;
+    use pretty_assertions::assert_eq;
 
     // Takes a string with '|' characters representing cursors.
     // Builds a file from the string with '|' removed, and returns the positions of the cursors.
-    fn cursors(text: &str) -> (File, Vec<tree_sitter::Point>) {
+    fn cursors(text: &str) -> (File, Vec<Point>) {
         let cursors = text
             .lines()
             .enumerate()
             .flat_map(|(row, line)| {
                 line.match_indices('|')
                     .enumerate()
-                    .map(move |(i, (column, _))| tree_sitter::Point {
+                    .map(move |(i, (column, _))| Point {
                         row,
                         // subtract 1 for each '|' before in this row,
                         // as those offset the position of following '|'
@@ -445,14 +482,14 @@ mod tests {
     }
 
     // Like cursors, but expect exactly one |
-    fn cursor(text: &str) -> (File, tree_sitter::Point) {
+    fn cursor(text: &str) -> (File, Point) {
         let cursor = text
             .lines()
             .enumerate()
             .flat_map(|(row, line)| {
                 line.match_indices('|')
                     .enumerate()
-                    .map(move |(i, (column, _))| tree_sitter::Point {
+                    .map(move |(i, (column, _))| Point {
                         row,
                         // subtract 1 for each '|' before in this row,
                         // as those offset the position of following '|'
@@ -521,8 +558,8 @@ mod tests {
                     range: tree_sitter::Range {
                         start_byte: 69,
                         end_byte: 82,
-                        start_point: tree_sitter::Point { row: 3, column: 12 },
-                        end_point: tree_sitter::Point { row: 3, column: 25 },
+                        start_point: Point { row: 3, column: 12 },
+                        end_point: Point { row: 3, column: 25 },
                     },
                 },
                 Symbol {
@@ -531,8 +568,8 @@ mod tests {
                     range: tree_sitter::Range {
                         start_byte: 95,
                         end_byte: 105,
-                        start_point: tree_sitter::Point { row: 4, column: 12 },
-                        end_point: tree_sitter::Point { row: 4, column: 22 },
+                        start_point: Point { row: 4, column: 12 },
+                        end_point: Point { row: 4, column: 22 },
                     },
                 },
                 Symbol {
@@ -541,8 +578,8 @@ mod tests {
                     range: tree_sitter::Range {
                         start_byte: 118,
                         end_byte: 174,
-                        start_point: tree_sitter::Point { row: 5, column: 12 },
-                        end_point: tree_sitter::Point { row: 7, column: 13 },
+                        start_point: Point { row: 5, column: 12 },
+                        end_point: Point { row: 7, column: 13 },
                     },
                 },
                 Symbol {
@@ -551,8 +588,8 @@ mod tests {
                     range: tree_sitter::Range {
                         start_byte: 147,
                         end_byte: 160,
-                        start_point: tree_sitter::Point { row: 6, column: 16 },
-                        end_point: tree_sitter::Point { row: 6, column: 29 },
+                        start_point: Point { row: 6, column: 16 },
+                        end_point: Point { row: 6, column: 29 },
                     },
                 }
             ]
@@ -582,8 +619,8 @@ mod tests {
                     range: tree_sitter::Range {
                         start_byte: 69,
                         end_byte: 82,
-                        start_point: tree_sitter::Point { row: 3, column: 12 },
-                        end_point: tree_sitter::Point { row: 3, column: 25 },
+                        start_point: Point { row: 3, column: 12 },
+                        end_point: Point { row: 3, column: 25 },
                     },
                 },
                 Symbol {
@@ -592,8 +629,8 @@ mod tests {
                     range: tree_sitter::Range {
                         start_byte: 95,
                         end_byte: 105,
-                        start_point: tree_sitter::Point { row: 4, column: 12 },
-                        end_point: tree_sitter::Point { row: 4, column: 22 },
+                        start_point: Point { row: 4, column: 12 },
+                        end_point: Point { row: 4, column: 22 },
                     },
                 },
                 Symbol {
@@ -602,8 +639,8 @@ mod tests {
                     range: tree_sitter::Range {
                         start_byte: 118,
                         end_byte: 174,
-                        start_point: tree_sitter::Point { row: 5, column: 12 },
-                        end_point: tree_sitter::Point { row: 7, column: 13 },
+                        start_point: Point { row: 5, column: 12 },
+                        end_point: Point { row: 7, column: 13 },
                     },
                 },
                 Symbol {
@@ -612,8 +649,8 @@ mod tests {
                     range: tree_sitter::Range {
                         start_byte: 147,
                         end_byte: 160,
-                        start_point: tree_sitter::Point { row: 6, column: 16 },
-                        end_point: tree_sitter::Point { row: 6, column: 29 },
+                        start_point: Point { row: 6, column: 16 },
+                        end_point: Point { row: 6, column: 29 },
                     },
                 }
             ]
@@ -864,6 +901,67 @@ mod tests {
                 Some(GotoContext::Type("foo.bar.Buz.Boz")),
                 None,
             ]
+        );
+    }
+
+    #[test]
+    fn test_references() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let file = File::new(
+            [
+                "syntax = \"proto3\";",
+                "import \"foo.proto\";",
+                "import \"bar.proto\";",
+                "message Foo {",
+                "    Bar b = 1;",
+                "    Biz.Buz bb = 2;",
+                "}",
+                "",
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            file.references(&GotoContext::Import("foo.proto")),
+            vec![tree_sitter::Range {
+                start_byte: 26,
+                end_byte: 37,
+                start_point: Point { row: 1, column: 7 },
+                end_point: Point { row: 1, column: 18 }
+            }]
+        );
+
+        assert_eq!(
+            file.references(&GotoContext::Import("bar.proto")),
+            vec![tree_sitter::Range {
+                start_byte: 46,
+                end_byte: 57,
+                start_point: Point { row: 2, column: 7 },
+                end_point: Point { row: 2, column: 18 }
+            }]
+        );
+
+        assert_eq!(file.references(&GotoContext::Import("baz.proto")), vec![]);
+
+        assert_eq!(
+            file.references(&GotoContext::Type("Bar")),
+            vec![tree_sitter::Range {
+                start_byte: 77,
+                end_byte: 80,
+                start_point: Point { row: 4, column: 4 },
+                end_point: Point { row: 4, column: 7 }
+            }]
+        );
+
+        assert_eq!(
+            file.references(&GotoContext::Type("Biz.Buz")),
+            vec![tree_sitter::Range {
+                start_byte: 92,
+                end_byte: 99,
+                start_point: Point { row: 5, column: 4 },
+                end_point: Point { row: 5, column: 11 }
+            }]
         );
     }
 

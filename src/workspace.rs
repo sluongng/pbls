@@ -241,6 +241,34 @@ impl Workspace {
         }
     }
 
+    pub fn references(
+        &self,
+        params: lsp_types::ReferenceParams,
+    ) -> Result<Option<Vec<lsp_types::Location>>> {
+        let doc = params.text_document_position;
+        let file = self.get(&doc.text_document.uri)?;
+
+        let Some(item) = file.type_at(
+            doc.position.line.try_into()?,
+            doc.position.character.try_into()?,
+        ) else {
+            return Ok(None);
+        };
+
+        let mut res = Vec::new();
+        for (uri, file) in self.files.iter() {
+            res.extend(
+                file.references(&item)
+                    .iter()
+                    .map(|range| lsp_types::Location {
+                        uri: uri.clone(),
+                        range: to_lsp_range(*range),
+                    }),
+            );
+        }
+        Ok(Some(res))
+    }
+
     fn find_symbol(
         &self,
         uri: Url,
@@ -428,6 +456,7 @@ fn to_lsp_completion(sym: file::Symbol) -> lsp_types::CompletionItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     fn setup() -> (Workspace, tempfile::TempDir) {
         let _ = env_logger::builder().is_test(true).try_init();
