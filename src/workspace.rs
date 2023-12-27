@@ -94,8 +94,9 @@ impl Workspace {
         diags
     }
 
-    pub fn save(&mut self, uri: Url, text: String) -> Result<Vec<lsp_types::Diagnostic>> {
-        self.open(uri, text)
+    pub fn save(&mut self, uri: Url) -> Result<Vec<lsp_types::Diagnostic>> {
+        let file = self.get(&uri)?;
+        protoc::diags(&uri, &file.text(), &self.proto_paths)
     }
 
     pub fn edit(

@@ -147,10 +147,7 @@ fn notify_did_save(
     params: DidSaveTextDocumentParams,
 ) -> Result<Option<lsp_server::Notification>> {
     let uri = params.text_document.uri;
-    let diags = workspace.save(
-        uri.clone(),
-        params.text.ok_or("Save notification missing text")?,
-    )?;
+    let diags = workspace.save(uri.clone())?;
 
     let params = lsp_types::PublishDiagnosticsParams {
         uri,
@@ -217,7 +214,7 @@ pub fn run(connection: Connection, loglevel: log::Level) -> Result<()> {
             TextDocumentSyncOptions {
                 open_close: Some(true),
                 save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
-                    include_text: Some(true),
+                    include_text: Some(false),
                 })),
                 change: Some(TextDocumentSyncKind::INCREMENTAL),
                 ..Default::default()

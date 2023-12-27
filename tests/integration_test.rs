@@ -355,9 +355,25 @@ message Foo{Flob flob = 1;}
 "#;
     std::fs::write(&path, text)?;
 
+    let start = lsp_types::Position {
+        line: 3,
+        character: "message Foo{ ".len() as u32,
+    };
+    client.notify::<DidChangeTextDocument>(DidChangeTextDocumentParams {
+        text_document: lsp_types::VersionedTextDocumentIdentifier {
+            uri: uri.clone(),
+            version: 0,
+        },
+        content_changes: vec![TextDocumentContentChangeEvent {
+            text: "Flob flob = 1;".into(),
+            range: Some(lsp_types::Range { start, end: start }),
+            range_length: None,
+        }],
+    })?;
+
     client.notify::<DidSaveTextDocument>(DidSaveTextDocumentParams {
         text_document: TextDocumentIdentifier { uri: uri.clone() },
-        text: Some(text.into()),
+        text: None,
     })?;
     let diags = client.recv::<PublishDiagnostics>()?;
     assert_eq!(
