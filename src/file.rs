@@ -54,12 +54,6 @@ impl File {
     }
 
     pub fn edit(&mut self, changes: Vec<lsp_types::TextDocumentContentChangeEvent>) -> Result<()> {
-        log::trace!("file edit");
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(language())
-            .expect("Error loading proto language");
-
         for change in changes {
             let range = change
                 .range
@@ -84,12 +78,14 @@ impl File {
                 change.text
             );
 
-            self.text = self.text[0..start_byte].to_string()
-                + change.text.as_str()
-                + &self.text[end_byte..];
+            self.text.replace_range(start_byte..end_byte, &change.text);
         }
         log::trace!("Edited text to: {}", self.text);
 
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(language())
+            .expect("Error loading proto language");
         self.tree = parser.parse(&self.text, None).ok_or("Parse failed")?;
         log::trace!("Edited tree to: {}", self.tree.root_node().to_sexp());
 
