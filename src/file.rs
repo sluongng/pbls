@@ -335,7 +335,6 @@ impl File {
         }
     }
 
-    // BUG: Also return the name of a message itself
     pub fn type_at(self: &Self, row: usize, col: usize) -> Option<GotoContext> {
         log::trace!("Getting type at row: {row} col: {col}");
 
@@ -352,6 +351,12 @@ impl File {
 
         if node.kind() == "strLit" && node.parent().is_some_and(|p| p.kind() == "import") {
             return Some(GotoContext::Import(self.get_text(node).trim_matches('"')));
+        }
+
+        if is_sexp(node, &["enum", "enumName", "ident"])
+            || is_sexp(node, &["message", "messageName", "ident"])
+        {
+            return Some(GotoContext::Type(self.get_text(node.parent().unwrap())));
         }
 
         if node.kind() == "ident" || node.kind() == "enumMessageType" {
@@ -872,7 +877,7 @@ mod tests {
 
             import "other|.proto";
 
-            message |Foo {
+            message F|oo {
                 st|ring s = 1;
                 int|32 i = 2;
                 B|ar |b = 3;
@@ -890,7 +895,7 @@ mod tests {
             vec![
                 None,
                 Some(GotoContext::Import("other.proto")),
-                None,
+                Some(GotoContext::Type("Foo")),
                 None,
                 None,
                 Some(GotoContext::Type("Bar")),

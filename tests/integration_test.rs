@@ -38,7 +38,7 @@ fn error_uri() -> Url {
 
 fn diag(uri: Url, target: &str, message: &str) -> Diagnostic {
     Diagnostic {
-        range: locate(uri, target).range,
+        range: locate_sym(uri, target).range,
         message: message.into(),
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some("pbls".into()),
@@ -62,14 +62,13 @@ fn sym(uri: Url, name: &str, text: &str) -> SymbolInformation {
         },
         tags: None,
         deprecated: None,
-        location: locate(uri, text),
+        location: locate_sym(uri, text),
         container_name: None,
     }
 }
 
-// Generate a GotoDefinition request for a line containing `text`,
-// with the cursor offset from the start of the search string by `offset`
-fn goto(uri: Url, text: &str, column: u32) -> GotoDefinitionParams {
+// Generate TextDocumentPositionParams for the given string and offset.
+fn position(uri: Url, text: &str, column: u32) -> TextDocumentPositionParams {
     let filetext = std::fs::read_to_string(uri.to_file_path().unwrap()).unwrap();
     let (lineno, line) = filetext
         .lines()
@@ -79,6 +78,18 @@ fn goto(uri: Url, text: &str, column: u32) -> GotoDefinitionParams {
         .unwrap_or_else(|| panic!("{text} not found in {uri}"));
 
     let character = line.find(text).unwrap_or(0);
+    TextDocumentPositionParams {
+        text_document: TextDocumentIdentifier { uri: base_uri() },
+        position: Position {
+            line: lineno.try_into().unwrap(),
+            character: column + u32::try_from(character).unwrap(),
+        },
+    }
+}
+
+// Generate a GotoDefinition request for a line containing `text`,
+// with the cursor offset from the start of the search string by `offset`
+fn goto(uri: Url, text: &str, column: u32) -> GotoDefinitionParams {
     GotoDefinitionParams {
         work_done_progress_params: lsp_types::WorkDoneProgressParams {
             work_done_token: None,
@@ -86,11 +97,36 @@ fn goto(uri: Url, text: &str, column: u32) -> GotoDefinitionParams {
         partial_result_params: lsp_types::PartialResultParams {
             partial_result_token: None,
         },
-        text_document_position_params: TextDocumentPositionParams {
-            text_document: TextDocumentIdentifier { uri: base_uri() },
-            position: Position {
-                line: lineno.try_into().unwrap(),
-                character: column + u32::try_from(character).unwrap(),
+        text_document_position_params: position(uri, text, column),
+    }
+}
+
+// Given "some |search| string", locate "some search string" in the document
+// and return the Location of "search".
+fn locate(uri: Url, text: &str) -> Location {
+    let start_off = text.find("|").unwrap();
+    let end_off = text.rfind("|").unwrap() - 1;
+    let text = text.replace("|", "");
+    let filetext = std::fs::read_to_string(uri.to_file_path().unwrap()).unwrap();
+    let (start_line, start_col) = filetext
+        .lines()
+        .enumerate()
+        .find_map(|(i, l)| match l.find(text.as_str()) {
+            Some(col) => Some((i, col)),
+            None => None,
+        })
+        .unwrap_or_else(|| panic!("{text} not found in {uri}"));
+
+    Location {
+        uri,
+        range: Range {
+            start: Position {
+                line: start_line.try_into().unwrap(),
+                character: (start_col + start_off).try_into().unwrap(),
+            },
+            end: Position {
+                line: start_line.try_into().unwrap(),
+                character: (start_col + end_off).try_into().unwrap(),
             },
         },
     }
@@ -99,7 +135,7 @@ fn goto(uri: Url, text: &str, column: u32) -> GotoDefinitionParams {
 // Return the Location for the definition of the type `name`.
 // `name` should include the "message" or "enum" prefix.
 // Assumes that the leading { is on the same line as the enum/message.
-fn locate(uri: Url, name: &str) -> Location {
+fn locate_sym(uri: Url, name: &str) -> Location {
     let filetext = std::fs::read_to_string(uri.to_file_path().unwrap()).unwrap();
     let (start_line, start_col) = filetext
         .lines()
@@ -507,7 +543,7 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
 
     assert_eq!(
         client.request::<GotoDefinition>(goto(base_uri(), "Thing t =", 3))?,
-        Some(GotoDefinitionResponse::Scalar(locate(
+        Some(GotoDefinitionResponse::Scalar(locate_sym(
             base_uri(),
             "enum Thing"
         )))
@@ -515,7 +551,7 @@ fn test_goto_definition_same_file() -> pbls::Result<()> {
 
     assert_eq!(
         client.request::<GotoDefinition>(goto(base_uri(), "Foo f =", 2))?,
-        Some(GotoDefinitionResponse::Scalar(locate(
+        Some(GotoDefinitionResponse::Scalar(locate_sym(
             base_uri(),
             "message Foo",
         )))
@@ -531,7 +567,7 @@ fn test_goto_definition_same_file_nested() -> pbls::Result<()> {
 
     assert_eq!(
         client.request::<GotoDefinition>(goto(base_uri(), "Foo.Buz buz =", 6))?,
-        Some(GotoDefinitionResponse::Scalar(locate(
+        Some(GotoDefinitionResponse::Scalar(locate_sym(
             base_uri(),
             "message Buz"
         )))
@@ -548,7 +584,7 @@ fn test_goto_definition_different_file() -> pbls::Result<()> {
     let resp = client.request::<GotoDefinition>(goto(base_uri(), "Dep d =", 0))?;
     assert_eq!(
         resp,
-        Some(GotoDefinitionResponse::Scalar(locate(
+        Some(GotoDefinitionResponse::Scalar(locate_sym(
             dep_uri(),
             "message Dep",
         )))
@@ -569,10 +605,34 @@ fn test_goto_definition_different_file_nested() -> pbls::Result<()> {
     ))?;
     assert_eq!(
         resp,
-        Some(GotoDefinitionResponse::Scalar(locate(
+        Some(GotoDefinitionResponse::Scalar(locate_sym(
             other_uri(),
             "message Nested",
         )))
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_message_references() -> pbls::Result<()> {
+    let mut client = TestClient::new()?;
+    client.open(base_uri())?;
+
+    assert_eq!(
+        client.request::<lsp_types::request::References>(lsp_types::ReferenceParams {
+            text_document_position: position(base_uri(), "message Foo", 9),
+            work_done_progress_params: lsp_types::WorkDoneProgressParams {
+                work_done_token: None,
+            },
+            partial_result_params: lsp_types::PartialResultParams {
+                partial_result_token: None
+            },
+            context: lsp_types::ReferenceContext {
+                include_declaration: false,
+            },
+        })?,
+        Some(vec![locate(base_uri(), "|Foo| f = 1")])
     );
 
     Ok(())
@@ -583,7 +643,7 @@ fn test_complete_import() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
     client.open(base_uri())?;
 
-    let loc = locate(base_uri(), "import \"other.proto\"");
+    let loc = locate_sym(base_uri(), "import \"other.proto\"");
     let pos = lsp_types::Position {
         line: loc.range.start.line + 1,
         character: 0,
@@ -637,7 +697,7 @@ fn test_complete_keyword() -> pbls::Result<()> {
     client.open(base_uri())?;
 
     // get completion on the line after "package"
-    let loc = locate(base_uri(), "package main;");
+    let loc = locate_sym(base_uri(), "package main;");
 
     let resp = client.request::<Completion>(completion_params(
         base_uri(),
@@ -687,7 +747,7 @@ fn test_complete_type() -> pbls::Result<()> {
     client.open(base_uri())?;
 
     // get completion in the body of message Foo.
-    let pos = locate(base_uri(), "Thing t =").range.start;
+    let pos = locate_sym(base_uri(), "Thing t =").range.start;
 
     let resp = client.request::<Completion>(completion_params(
         base_uri(),
