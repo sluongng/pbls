@@ -23,7 +23,7 @@ Ensure [`protoc`](https://github.com/protocolbuffers/protobuf#protobuf-compiler-
 # Installation
 
 ```
-cargo install --git https://git.sr.ht/~rcorre/pbls
+cargo install --git https://git.sr.ht/~rrc/pbls
 ```
 
 Ensure the cargo binary path (usually `~/.cargo/bin`) is on `$PATH`.
