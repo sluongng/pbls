@@ -118,7 +118,7 @@ fn handle_goto_definition(
 ) -> Result<Option<GotoDefinitionResponse>> {
     let uri = params.text_document_position_params.text_document.uri;
     let pos = params.text_document_position_params.position;
-    let loc = (*workspace).definition(uri, pos)?;
+    let loc = (*workspace).goto(uri, pos)?;
     Ok(loc.map(GotoDefinitionResponse::Scalar))
 }
 

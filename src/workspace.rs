@@ -220,11 +220,7 @@ impl Workspace {
             .filter(move |fname| !imports.contains(&fname.as_str())))
     }
 
-    pub fn definition(
-        &self,
-        uri: Url,
-        pos: lsp_types::Position,
-    ) -> Result<Option<lsp_types::Location>> {
+    pub fn goto(&self, uri: Url, pos: lsp_types::Position) -> Result<Option<lsp_types::Location>> {
         let file = self.get(&uri)?;
         let ctx = file.type_at(pos.line.try_into()?, pos.character.try_into()?);
         log::debug!("Finding definition for {ctx:?}");
@@ -567,7 +563,7 @@ mod tests {
         ws.open(foo_uri.clone(), text).unwrap();
 
         assert_eq!(
-            ws.definition(
+            ws.goto(
                 foo_uri.clone(),
                 lsp_types::Position {
                     line: 1,
@@ -582,7 +578,7 @@ mod tests {
         );
 
         assert_eq!(
-            ws.definition(
+            ws.goto(
                 foo_uri.clone(),
                 lsp_types::Position {
                     line: 2,
@@ -597,7 +593,7 @@ mod tests {
         );
 
         assert_eq!(
-            ws.definition(
+            ws.goto(
                 foo_uri,
                 lsp_types::Position {
                     line: 3,
@@ -616,29 +612,46 @@ mod tests {
             &tmp,
             "foo.proto",
             &[
-                "syntax = \"proto3\";",     // 0
-                "package main;",            // 1
-                "import \"bar.proto\";",    // 2
-                "message One {",            // 3
-                "message Two {",            // 4
-                "enum Three {",             // 5
-                "}",                        // 6
-                "}",                        // 7
-                "}",                        // 8
-                "message Stuff {",          // 9
-                "One one = 1;",             // 10
-                "One.Two two = 2;",         // 11
-                "One.Two.Three three = 3;", // 12
-                "Two nope = 4;",            // 13
-                "}",                        // 14
+                "syntax = \"proto3\";",        // 0
+                "package main;",               // 1
+                "import \"bar.proto\";",       // 2
+                "message One {",               // 3
+                "message Two {",               // 4
+                "enum Three {",                // 5
+                "}",                           // 6
+                "}",                           // 7
+                "}",                           // 8
+                "message Stuff {",             // 9
+                "One one = 1;",                // 10
+                "One.Two two = 2;",            // 11
+                "One.Two.Three three = 3;",    // 12
+                "Two nope = 4;",               // 13
+                "bar.One bar_one = 5;",        // 14
+                "bar.One.Two b1 = 6;",         // 15
+                "bar.One.Two.Three b123 = 7;", // 16
+                "}",                           // 17
             ],
         );
-        let (bar_uri, _) = proto(&tmp, "bar.proto", &["syntax = \"proto3\";"]);
+        let (bar_uri, _) = proto(
+            &tmp,
+            "bar.proto",
+            &[
+                "syntax = \"proto3\";", // 0
+                "package bar;",         // 1
+                "message One",          // 2
+                "message One {",        // 3
+                "message Two {",        // 4
+                "enum Three {",         // 5
+                "}",                    // 6
+                "}",                    // 7
+                "}",                    // 8
+            ],
+        );
 
         ws.open(foo_uri.clone(), text).unwrap();
 
         assert_eq!(
-            ws.definition(
+            ws.goto(
                 foo_uri.clone(),
                 lsp_types::Position {
                     line: 10,
@@ -662,7 +675,7 @@ mod tests {
         );
 
         assert_eq!(
-            ws.definition(
+            ws.goto(
                 foo_uri.clone(),
                 lsp_types::Position {
                     line: 11,
@@ -686,7 +699,7 @@ mod tests {
         );
 
         assert_eq!(
-            ws.definition(
+            ws.goto(
                 foo_uri.clone(),
                 lsp_types::Position {
                     line: 12,
@@ -710,7 +723,79 @@ mod tests {
         );
 
         assert_eq!(
-            ws.definition(
+            ws.goto(
+                foo_uri.clone(),
+                lsp_types::Position {
+                    line: 14,
+                    character: 0,
+                }
+            )
+            .unwrap(),
+            Some(lsp_types::Location {
+                uri: bar_uri.clone(),
+                range: lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: 3,
+                        character: 0,
+                    },
+                    end: lsp_types::Position {
+                        line: 8,
+                        character: 1,
+                    },
+                },
+            })
+        );
+
+        assert_eq!(
+            ws.goto(
+                foo_uri.clone(),
+                lsp_types::Position {
+                    line: 15,
+                    character: 0,
+                }
+            )
+            .unwrap(),
+            Some(lsp_types::Location {
+                uri: bar_uri.clone(),
+                range: lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: 4,
+                        character: 0,
+                    },
+                    end: lsp_types::Position {
+                        line: 7,
+                        character: 1,
+                    },
+                },
+            })
+        );
+
+        assert_eq!(
+            ws.goto(
+                foo_uri.clone(),
+                lsp_types::Position {
+                    line: 16,
+                    character: 0,
+                }
+            )
+            .unwrap(),
+            Some(lsp_types::Location {
+                uri: bar_uri.clone(),
+                range: lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: 5,
+                        character: 0,
+                    },
+                    end: lsp_types::Position {
+                        line: 6,
+                        character: 1,
+                    },
+                },
+            })
+        );
+
+        assert_eq!(
+            ws.goto(
                 foo_uri.clone(),
                 lsp_types::Position {
                     line: 13,
