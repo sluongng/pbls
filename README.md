@@ -14,7 +14,7 @@
   - [x] Keyword
   - [x] Import
   - [x] Field Type
-- [ ] Find References
+- [x] Find References
 
 # Prerequisites
 

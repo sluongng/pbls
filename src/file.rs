@@ -384,6 +384,7 @@ impl File {
         if res.is_empty() {
             None
         } else {
+            res.reverse();
             Some(res.join("."))
         }
     }
@@ -549,7 +550,9 @@ mod tests {
             message Foo{}
             enum Bar{}
             message Baz{
-                message Biz{}
+                message Biz{
+                    message Buz{}
+                }
             }
         "#;
         let file = File::new(text.to_string()).unwrap();
@@ -582,9 +585,9 @@ mod tests {
                     name: "Baz".into(),
                     range: tree_sitter::Range {
                         start_byte: 118,
-                        end_byte: 174,
+                        end_byte: 225,
                         start_point: Point { row: 5, column: 12 },
-                        end_point: Point { row: 7, column: 13 },
+                        end_point: Point { row: 9, column: 13 },
                     },
                 },
                 Symbol {
@@ -592,11 +595,21 @@ mod tests {
                     name: "Baz.Biz".into(),
                     range: tree_sitter::Range {
                         start_byte: 147,
-                        end_byte: 160,
+                        end_byte: 211,
                         start_point: Point { row: 6, column: 16 },
-                        end_point: Point { row: 6, column: 29 },
+                        end_point: Point { row: 8, column: 17 },
                     },
-                }
+                },
+                Symbol {
+                    kind: SymbolKind::Message,
+                    name: "Baz.Biz.Buz".into(),
+                    range: tree_sitter::Range {
+                        start_byte: 180,
+                        end_byte: 193,
+                        start_point: Point { row: 7, column: 20 },
+                        end_point: Point { row: 7, column: 33 },
+                    },
+                },
             ]
         );
     }
