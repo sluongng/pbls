@@ -547,4 +547,178 @@ mod tests {
             )
         );
     }
+
+    #[test]
+    fn test_goto_import() {
+        let (mut ws, tmp) = setup();
+        let (foo_uri, text) = proto(
+            &tmp,
+            "foo.proto",
+            &[
+                "syntax = \"proto3\";",
+                "import \"bar.proto\";",
+                "import \"baz.proto\";",
+                "import \"biz.proto\";",
+            ],
+        );
+        let (bar_uri, _) = proto(&tmp, "bar.proto", &["syntax = \"proto3\";"]);
+        let (baz_uri, _) = proto(&tmp, "baz.proto", &["syntax = \"proto3\";"]);
+
+        ws.open(foo_uri.clone(), text).unwrap();
+
+        assert_eq!(
+            ws.definition(
+                foo_uri.clone(),
+                lsp_types::Position {
+                    line: 1,
+                    character: "import \"bar.".len().try_into().unwrap(),
+                }
+            )
+            .unwrap(),
+            Some(lsp_types::Location {
+                uri: bar_uri,
+                range: lsp_types::Range::default(),
+            })
+        );
+
+        assert_eq!(
+            ws.definition(
+                foo_uri.clone(),
+                lsp_types::Position {
+                    line: 2,
+                    character: "import \"baz".len().try_into().unwrap(),
+                }
+            )
+            .unwrap(),
+            Some(lsp_types::Location {
+                uri: baz_uri,
+                range: lsp_types::Range::default(),
+            })
+        );
+
+        assert_eq!(
+            ws.definition(
+                foo_uri,
+                lsp_types::Position {
+                    line: 3,
+                    character: "import \"biz".len().try_into().unwrap(),
+                }
+            )
+            .unwrap(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_goto_type() {
+        let (mut ws, tmp) = setup();
+        let (foo_uri, text) = proto(
+            &tmp,
+            "foo.proto",
+            &[
+                "syntax = \"proto3\";",     // 0
+                "package main;",            // 1
+                "import \"bar.proto\";",    // 2
+                "message One {",            // 3
+                "message Two {",            // 4
+                "enum Three {",             // 5
+                "}",                        // 6
+                "}",                        // 7
+                "}",                        // 8
+                "message Stuff {",          // 9
+                "One one = 1;",             // 10
+                "One.Two two = 2;",         // 11
+                "One.Two.Three three = 3;", // 12
+                "Two nope = 4;",            // 13
+                "}",                        // 14
+            ],
+        );
+        let (bar_uri, _) = proto(&tmp, "bar.proto", &["syntax = \"proto3\";"]);
+
+        ws.open(foo_uri.clone(), text).unwrap();
+
+        assert_eq!(
+            ws.definition(
+                foo_uri.clone(),
+                lsp_types::Position {
+                    line: 10,
+                    character: 0,
+                }
+            )
+            .unwrap(),
+            Some(lsp_types::Location {
+                uri: foo_uri.clone(),
+                range: lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: 3,
+                        character: 0,
+                    },
+                    end: lsp_types::Position {
+                        line: 8,
+                        character: 1,
+                    },
+                },
+            })
+        );
+
+        assert_eq!(
+            ws.definition(
+                foo_uri.clone(),
+                lsp_types::Position {
+                    line: 11,
+                    character: "One.".len().try_into().unwrap(),
+                }
+            )
+            .unwrap(),
+            Some(lsp_types::Location {
+                uri: foo_uri.clone(),
+                range: lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: 4,
+                        character: 0,
+                    },
+                    end: lsp_types::Position {
+                        line: 7,
+                        character: 1,
+                    },
+                },
+            })
+        );
+
+        assert_eq!(
+            ws.definition(
+                foo_uri.clone(),
+                lsp_types::Position {
+                    line: 12,
+                    character: "One.Two.T".len().try_into().unwrap(),
+                }
+            )
+            .unwrap(),
+            Some(lsp_types::Location {
+                uri: foo_uri.clone(),
+                range: lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: 5,
+                        character: 0,
+                    },
+                    end: lsp_types::Position {
+                        line: 6,
+                        character: 1,
+                    },
+                },
+            })
+        );
+
+        assert_eq!(
+            ws.definition(
+                foo_uri.clone(),
+                lsp_types::Position {
+                    line: 13,
+                    character: 0,
+                }
+            )
+            .unwrap(),
+            None,
+        );
+    }
 }
