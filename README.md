@@ -4,17 +4,11 @@
 
 # Features
 
-- [x] Diagnostics
-- [x] Goto Definition
-  - [x] Field Type
-  - [x] Import
-- [x] Document Symbols
-- [x] Workspace Symbols
-- [ ] Completion (WIP, still has some bugs)
-  - [x] Keyword
-  - [x] Import
-  - [x] Field Type
-- [x] Find References
+- Diagnostics (from `protoc`)
+- Goto Definition (for fields and imports)
+- Document/Workspace Symbols
+- Completion (keywords, imports, types, and options)
+- Find References
 
 # Prerequisites
 

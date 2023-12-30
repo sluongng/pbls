@@ -272,7 +272,9 @@ impl File {
         } else if is_sexp(node, &["import", "strLit"]) {
             // import "foo|.proto" -> (import (strLit))
             Some(CompletionContext::Import)
-        } else if node.kind() == "ident" || node.kind() == "type" {
+        } else if (node.kind() == "ident" || node.kind() == "type")
+            && !node.parent().is_some_and(|p| p.kind() == "oneofName")
+        {
             // message Foo { Bar| -> (ident)
             // message Foo { string| -> (type (string))
             self.parent_context(Some(node))
@@ -872,6 +874,7 @@ mod tests {
         test(&["message Foo{ Bar bar = 1| }"], None);
         test(&["message Foo{ Bar bar = 1|; }"], None);
         test(&["message Foo{ Bar bar = 1;| }"], None);
+        test(&["message Foo{ oneof th| }"], None);
     }
 
     #[test]
