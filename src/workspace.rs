@@ -226,7 +226,7 @@ impl Workspace {
         log::debug!("Finding definition for {ctx:?}");
         match ctx {
             None => Ok(None),
-            Some(file::GotoContext::Type(name)) => self.find_symbol(uri, file, name),
+            Some(file::GotoContext::Type(typ)) => self.find_symbol(uri, file, &typ),
             Some(file::GotoContext::Import(name)) => {
                 log::debug!("Looking up import {name:?}");
                 Ok(self.find_import(name).map(|path| lsp_types::Location {
@@ -269,11 +269,35 @@ impl Workspace {
         &self,
         uri: Url,
         file: &file::File,
-        name: &str,
+        typ: &file::GotoTypeContext,
     ) -> Result<Option<lsp_types::Location>> {
-        // First look within the file.
         let mut qc = tree_sitter::QueryCursor::new();
-        if let Some(sym) = file.symbols(&mut qc).find(|s| s.name == name) {
+
+        // First look within the file, qualifying the name if it is nested.
+        if let Some(sym) = typ.parent.as_ref().and_then(|p| {
+            let qualified = format!("{p}.{}", typ.name);
+            log::trace!("Searching for {qualified} in {uri}");
+            file.symbols(&mut qc).find(|sym| sym.name == qualified)
+        }) {
+            return Ok(Some(lsp_types::Location {
+                uri,
+                range: to_lsp_range(sym.range),
+            }));
+        }
+
+        log::trace!("Searching for {} in {uri}", typ.name);
+        // Next look within the file for the unqualified name.
+        if let Some(sym) = file.symbols(&mut qc).find(|s| s.name == typ.name) {
+            return Ok(Some(lsp_types::Location {
+                uri,
+                range: to_lsp_range(sym.range),
+            }));
+        };
+
+        // If the type is nested, try the fully qualified name
+        log::trace!("Searching for {} in {uri}", typ.name);
+        let mut qc = tree_sitter::QueryCursor::new();
+        if let Some(sym) = file.symbols(&mut qc).find(|s| s.name == typ.name) {
             return Ok(Some(lsp_types::Location {
                 uri,
                 range: to_lsp_range(sym.range),
@@ -292,18 +316,26 @@ impl Workspace {
         let local_package = file.package();
         for (uri, file) in imports {
             let package = file.package();
-            let expected_name = if package == local_package {
-                name.to_string()
+            if let Some(sym) = if package == local_package {
+                log::trace!("Searching for {} in {uri}", typ.name);
+                // same package, match the name without the package prefix
+                file.symbols(&mut qc).find(|sym| sym.name == typ.name)
             } else if let Some(package) = package {
-                name.strip_prefix(package)
-                    .unwrap_or(name)
+                // different package, fully qualify the name
+                let qualified = typ
+                    .name
+                    .strip_prefix(package)
+                    .unwrap_or(typ.name)
                     .strip_prefix(".")
-                    .unwrap_or(name)
-                    .to_string()
+                    .unwrap_or(typ.name)
+                    .to_string();
+                log::trace!("Searching for {} in {uri}", qualified);
+                file.symbols(&mut qc).find(|sym| sym.name == qualified)
             } else {
-                name.to_string()
-            };
-            if let Some(sym) = file.symbols(&mut qc).find(|sym| sym.name == expected_name) {
+                // target file has no package
+                log::trace!("Searching for {} in {uri}", typ.name);
+                file.symbols(&mut qc).find(|sym| sym.name == typ.name)
+            } {
                 return Ok(Some(lsp_types::Location {
                     uri,
                     range: to_lsp_range(sym.range),
@@ -617,9 +649,9 @@ mod tests {
                 "import \"bar.proto\";",       // 2
                 "message One {",               // 3
                 "message Two {",               // 4
-                "enum Three {",                // 5
+                "enum Three {}",               // 5
                 "}",                           // 6
-                "}",                           // 7
+                "Two.Three tt = 1;",           // 7
                 "}",                           // 8
                 "message Stuff {",             // 9
                 "One one = 1;",                // 10
@@ -649,6 +681,30 @@ mod tests {
         );
 
         ws.open(foo_uri.clone(), text).unwrap();
+
+        assert_eq!(
+            ws.goto(
+                foo_uri.clone(),
+                lsp_types::Position {
+                    line: 7,
+                    character: "Two.Th".len().try_into().unwrap(),
+                }
+            )
+            .unwrap(),
+            Some(lsp_types::Location {
+                uri: foo_uri.clone(),
+                range: lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: 5,
+                        character: 0,
+                    },
+                    end: lsp_types::Position {
+                        line: 5,
+                        character: 13,
+                    },
+                },
+            })
+        );
 
         assert_eq!(
             ws.goto(
@@ -691,7 +747,7 @@ mod tests {
                         character: 0,
                     },
                     end: lsp_types::Position {
-                        line: 7,
+                        line: 6,
                         character: 1,
                     },
                 },
@@ -715,8 +771,8 @@ mod tests {
                         character: 0,
                     },
                     end: lsp_types::Position {
-                        line: 6,
-                        character: 1,
+                        line: 5,
+                        character: 13,
                     },
                 },
             })

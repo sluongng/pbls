@@ -31,8 +31,14 @@ pub enum CompletionContext<'a> {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct GotoTypeContext<'a> {
+    pub name: &'a str,
+    pub parent: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum GotoContext<'a> {
-    Type(&'a str),
+    Type(GotoTypeContext<'a>),
     Import(&'a str),
 }
 
@@ -304,7 +310,7 @@ impl File {
 
     pub fn references(self: &Self, item: &GotoContext) -> Vec<tree_sitter::Range> {
         match item {
-            GotoContext::Type(name) => {
+            GotoContext::Type(typ) => {
                 static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
                 let query = QUERY.get_or_init(|| {
                     tree_sitter::Query::new(language(), "(field (type) @name)").unwrap()
@@ -313,8 +319,8 @@ impl File {
                 let mut qc = tree_sitter::QueryCursor::new();
                 qc.matches(&query, self.tree.root_node(), self.text.as_bytes())
                     .map(|m| m.captures[0].node)
-                    .inspect(|x| eprintln!("Check {x:?}: {} == {name}", self.get_text(*x)))
-                    .filter(|n| self.get_text(*n) == *name)
+                    .inspect(|x| eprintln!("Check {x:?}: {} == {typ:?}", self.get_text(*x)))
+                    .filter(|n| self.get_text(*n) == typ.name)
                     .map(|n| n.range())
                     .collect()
             }
@@ -353,15 +359,23 @@ impl File {
             return Some(GotoContext::Import(self.get_text(node).trim_matches('"')));
         }
 
+        // Cursor is over a message or enum name.
         if is_sexp(node, &["enum", "enumName", "ident"])
             || is_sexp(node, &["message", "messageName", "ident"])
         {
-            return Some(GotoContext::Type(self.get_text(node.parent().unwrap())));
+            return Some(GotoContext::Type(GotoTypeContext {
+                name: self.get_text(node.parent().unwrap()),
+                parent: None,
+            }));
         }
 
+        // Cursor is over a field type.
         if node.kind() == "ident" || node.kind() == "enumMessageType" {
             if let Some(name) = self.field_type(Some(node)) {
-                return Some(GotoContext::Type(name));
+                return Some(GotoContext::Type(GotoTypeContext {
+                    name,
+                    parent: self.parent_name(node),
+                }));
             }
         }
 
@@ -369,12 +383,15 @@ impl File {
     }
 
     fn parent_name(&self, node: tree_sitter::Node) -> Option<String> {
+        log::trace!("Finding parent name for {node:?}");
         let mut node = node;
         let mut res = Vec::<&str>::new();
         loop {
             if let Some(parent) = node.parent() {
                 if parent.kind() == "message" {
-                    self.type_name(parent).map(|n| res.push(n));
+                    let name = self.type_name(parent);
+                    log::trace!("Appending parent name {name:?}");
+                    name.map(|n| res.push(n));
                 }
                 node = parent;
             } else {
@@ -908,15 +925,30 @@ mod tests {
             vec![
                 None,
                 Some(GotoContext::Import("other.proto")),
-                Some(GotoContext::Type("Foo")),
+                Some(GotoContext::Type(GotoTypeContext {
+                    name: "Foo",
+                    parent: None
+                })),
                 None,
                 None,
-                Some(GotoContext::Type("Bar")),
+                Some(GotoContext::Type(GotoTypeContext {
+                    name: "Bar",
+                    parent: Some("Foo".into()),
+                })),
                 None,
-                Some(GotoContext::Type("Baz.Buz")),
+                Some(GotoContext::Type(GotoTypeContext {
+                    name: "Baz.Buz",
+                    parent: Some("Foo".into()),
+                })),
                 None,
-                Some(GotoContext::Type("foo.bar.Buz.Boz")),
-                Some(GotoContext::Type("foo.bar.Buz.Boz")),
+                Some(GotoContext::Type(GotoTypeContext {
+                    name: "foo.bar.Buz.Boz",
+                    parent: Some("Foo".into()),
+                })),
+                Some(GotoContext::Type(GotoTypeContext {
+                    name: "foo.bar.Buz.Boz",
+                    parent: Some("Foo".into()),
+                })),
                 None,
             ]
         );
@@ -963,7 +995,10 @@ mod tests {
         assert_eq!(file.references(&GotoContext::Import("baz.proto")), vec![]);
 
         assert_eq!(
-            file.references(&GotoContext::Type("Bar")),
+            file.references(&GotoContext::Type(GotoTypeContext {
+                name: "Bar",
+                parent: None
+            })),
             vec![tree_sitter::Range {
                 start_byte: 77,
                 end_byte: 80,
@@ -973,7 +1008,10 @@ mod tests {
         );
 
         assert_eq!(
-            file.references(&GotoContext::Type("Biz.Buz")),
+            file.references(&GotoContext::Type(GotoTypeContext {
+                name: "Biz.Buz",
+                parent: None
+            })),
             vec![tree_sitter::Range {
                 start_byte: 92,
                 end_byte: 99,
