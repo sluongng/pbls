@@ -64,20 +64,32 @@ impl File {
             let range = change
                 .range
                 .ok_or("No range in change notification {change:?}")?;
-            let mut lines = self.text.split_inclusive("\n");
+            let mut lines = self.text.split_inclusive("\n").peekable();
+            // First count bytes in all lines preceding the edit.
             let start_byte = lines
                 .by_ref()
                 .take(range.start.line.try_into()?)
                 .map(str::len)
-                .sum::<usize>()
-                + usize::try_from(range.start.character)?;
+                .sum::<usize>();
+            // Now add bytes up to the character within the start line.
+            let start_offset = lines
+                .peek()
+                .map(|line| char_to_byte(&line, range.start.character))
+                .unwrap_or(0);
+            let start_byte = start_byte + start_offset;
+            // Now count bytes in all lines following the edit.
             let end_byte = start_byte
                 + lines
+                    .by_ref()
                     .take((range.end.line - range.start.line).try_into()?)
                     .map(str::len)
-                    .sum::<usize>()
-                + usize::try_from(range.end.character)?
-                - usize::try_from(range.start.character)?;
+                    .sum::<usize>();
+            // Now add bytes up to the character within the end line.
+            let end_offset = lines
+                .peek()
+                .map(|line| char_to_byte(&line, range.end.character))
+                .unwrap_or(0);
+            let end_byte = end_byte + end_offset - start_offset;
 
             log::trace!(
                 "Computing change {start_byte}..{end_byte} with text {}",
@@ -477,6 +489,13 @@ fn is_sexp(node: tree_sitter::Node, sexp: &[&str]) -> bool {
     } else {
         false
     }
+}
+
+fn char_to_byte(line: &str, char: u32) -> usize {
+    line.chars()
+        .take(char.try_into().unwrap())
+        .map(|c| c.len_utf8())
+        .sum()
 }
 
 #[cfg(test)]
@@ -1153,6 +1172,48 @@ mod tests {
                 "bytes b = 4;",
                 "}",
                 ""
+            ]
+            .join("\n")
+        );
+    }
+
+    #[test]
+    fn test_edit_unicode() {
+        let text = [
+            "syntax = \"proto3\";",
+            "import \"examp𐐀e.proto\";",
+            "import \"other.proto\";",
+            "",
+        ]
+        .join("\n");
+        let mut file = File::new(text.clone()).unwrap();
+        assert_eq!(file.text, text);
+
+        let change = |(start_line, start_char), (end_line, end_char), text: &str| {
+            lsp_types::TextDocumentContentChangeEvent {
+                range: Some(lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: start_line,
+                        character: start_char,
+                    },
+                    end: lsp_types::Position {
+                        line: end_line,
+                        character: end_char,
+                    },
+                }),
+                range_length: None,
+                text: text.into(),
+            }
+        };
+
+        file.edit(vec![change((1, 8), (1, 15), "thing")]).unwrap();
+        assert_eq!(
+            file.text,
+            [
+                "syntax = \"proto3\";",
+                "import \"thing.proto\";",
+                "import \"other.proto\";",
+                "",
             ]
             .join("\n")
         );
