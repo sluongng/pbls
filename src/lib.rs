@@ -215,6 +215,9 @@ fn find_import_paths(root: std::path::PathBuf) -> Result<Vec<std::path::PathBuf>
 
 pub fn run(connection: Connection) -> Result<()> {
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
+        // BUG: technically we are supposed to support UTF-16.
+        // From what I've seen editors seem to be happy with UTF-8.
+        position_encoding: Some(lsp_types::PositionEncodingKind::UTF8),
         document_symbol_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
