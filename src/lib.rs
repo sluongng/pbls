@@ -272,7 +272,13 @@ pub fn run(connection: Connection) -> Result<()> {
     let proto_paths = conf
         .proto_paths
         .iter()
-        .map(|p| p.canonicalize().unwrap())
+        .filter_map(|p| match p.canonicalize() {
+            Ok(path) => Some(path),
+            Err(err) => {
+                log::warn!("Failed to canonicalize {p:?}: {err}");
+                None
+            }
+        })
         .collect();
     log::debug!("Using proto_paths {:?}", proto_paths);
 
