@@ -73,10 +73,11 @@ impl Workspace {
         let text = std::fs::read_to_string(path)?;
         let file = file::File::new(text)?;
         let mut qc = tree_sitter::QueryCursor::new();
-        for import in file.imports(&mut qc) {
-            self.open_import(import)?;
-        }
+        let imports = Vec::from_iter(file.imports(&mut qc).map(str::to_string));
         self.files.insert(uri, file);
+        for import in imports {
+            self.open_import(import.as_str())?;
+        }
         Ok(())
     }
 
@@ -85,12 +86,14 @@ impl Workspace {
         let file = file::File::new(text)?;
 
         let mut qc = tree_sitter::QueryCursor::new();
-
-        for import in file.imports(&mut qc) {
-            self.open_import(import)?;
-        }
+        let imports = Vec::from_iter(file.imports(&mut qc).map(str::to_string));
 
         self.files.insert(uri.clone(), file);
+
+        for import in imports {
+            self.open_import(import.as_str())?;
+        }
+
         diags
     }
 
@@ -497,6 +500,23 @@ mod tests {
         let text = lines.join("\n") + "\n";
         std::fs::write(&path, &text).unwrap();
         (Url::from_file_path(path).unwrap(), text)
+    }
+
+    #[test]
+    fn test_open_loop() {
+        let (mut ws, tmp) = setup();
+        let (uri, text) = proto(
+            &tmp,
+            "foo.proto",
+            &["syntax = \"proto3\";", "import \"bar.proto\";"],
+        );
+        proto(
+            &tmp,
+            "bar.proto",
+            &["syntax = \"proto3\";", "import \"bar.proto\";"],
+        );
+
+        ws.open(uri.clone(), text).unwrap();
     }
 
     #[test]
