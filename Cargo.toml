@@ -13,6 +13,7 @@ tree-sitter-protobuf = { git = "https://github.com/yusdacra/tree-sitter-protobuf
 tree-sitter = "~0.20.0"
 log = "0.4.20"
 env_logger = { version = "0.10.1", default-features = false }
+walkdir = "2.4.0"
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

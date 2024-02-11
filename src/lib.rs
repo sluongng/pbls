@@ -264,7 +264,7 @@ pub fn run(connection: Connection) -> Result<()> {
     } else {
         log::info!("Using default config");
         Config {
-            proto_paths: find_import_paths(root)?,
+            proto_paths: find_import_paths(root.clone())?,
         }
     };
     log::info!("Using config {:?}", conf);
@@ -272,6 +272,13 @@ pub fn run(connection: Connection) -> Result<()> {
     let proto_paths = conf
         .proto_paths
         .iter()
+        .map(|path| {
+            if path.is_relative() {
+                root.join(path)
+            } else {
+                path.clone()
+            }
+        })
         .filter_map(|p| match p.canonicalize() {
             Ok(path) => Some(path),
             Err(err) => {

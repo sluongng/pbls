@@ -197,31 +197,7 @@ impl Workspace {
         }
     }
 
-    // Return all available imports for a given file.
-    // Excludes the file itself and any files already imported.
-    pub fn available_imports<'a>(
-        &'a self,
-        uri: &'a Url,
-    ) -> Result<impl Iterator<Item = String> + 'a> {
-        let name = std::path::Path::new(uri.path())
-            .file_name()
-            .ok_or("Invalid path: {uri}")?;
-        let file = self.files.get(uri).ok_or("File not loaded: {uri}")?;
-        let mut qc = tree_sitter::QueryCursor::new();
-        let imports = file.imports(&mut qc).collect::<Vec<_>>();
-        Ok(self
-            .proto_paths
-            .iter()
-            .filter_map(|dir| std::fs::read_dir(dir).ok())
-            .flatten()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.metadata().is_ok_and(|m| m.is_file()))
-            .map(|entry| entry.file_name())
-            .filter(move |fname| fname != name)
-            .filter_map(|fname| fname.into_string().ok())
-            .filter(|fname| fname.ends_with(".proto"))
-            .filter(move |fname| !imports.contains(&fname.as_str())))
-    }
+    // Return the relative paths of proto files under the given dir.
 
     pub fn goto(&self, uri: Url, pos: lsp_types::Position) -> Result<Option<lsp_types::Location>> {
         let file = self.get(&uri)?;
@@ -413,17 +389,102 @@ impl Workspace {
         &self,
         url: &lsp_types::Url,
     ) -> Result<Option<lsp_types::CompletionResponse>> {
+        log::debug!("Completing imports for {url:?}");
+
+        let current = std::path::Path::new(url.path())
+            .file_name()
+            .ok_or("Invalid path: {uri}")?
+            .to_str()
+            .ok_or("Invalid path: {uri}")?;
+
+        let file = self.files.get(url).ok_or("File not loaded: {uri}")?;
+        let mut qc = tree_sitter::QueryCursor::new();
+        let existing = file
+            .imports(&mut qc)
+            .chain(std::iter::once(current))
+            .collect::<Vec<_>>();
+
+        log::trace!("Excluding existing imports: {existing:?}");
+
         let items = self
-            .available_imports(&url)?
-            .map(|s| lsp_types::CompletionItem {
-                label: s.clone(),
-                label_details: None,
-                kind: Some(lsp_types::CompletionItemKind::FILE),
-                insert_text: Some(format!("{}\";", s)),
-                ..Default::default()
-            });
-        Ok(Some(lsp_types::CompletionResponse::Array(items.collect())))
+            .proto_paths
+            .iter()
+            .map(|p| find_protos(p.as_path(), &existing))
+            .flat_map(|p| {
+                p.iter()
+                    .map(|s| lsp_types::CompletionItem {
+                        insert_text: Some(format!("{}\";", s)),
+                        label: s.to_owned(),
+                        label_details: None,
+                        kind: Some(lsp_types::CompletionItemKind::FILE),
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        Ok(Some(lsp_types::CompletionResponse::Array(items)))
     }
+}
+
+fn find_protos(dir: &std::path::Path, excludes: &Vec<&str>) -> Vec<String> {
+    let mut res = vec![];
+    let entries = match std::fs::read_dir(dir) {
+        Ok(ok) => ok,
+        Err(err) => {
+            log::warn!("Failed to read dir {dir:?}: {err:?}");
+            return res;
+        }
+    };
+    log::trace!("Finding imports under {dir:?}");
+    for path in entries {
+        let path = match path {
+            Ok(ok) => ok,
+            Err(err) => {
+                log::warn!("Failed to read dir {dir:?}: {err:?}");
+                continue;
+            }
+        };
+
+        let meta = match path.metadata() {
+            Ok(ok) => ok,
+            Err(err) => {
+                log::warn!("Failed to read dir {dir:?}: {err:?}");
+                continue;
+            }
+        };
+
+        if meta.is_dir() {
+            let dir = dir.join(path.path());
+            let protos = find_protos(dir.as_path(), excludes);
+            let root = &path.file_name();
+            let root = std::path::PathBuf::from(root);
+            res.extend(
+                protos
+                    .iter()
+                    .filter_map(|p| root.join(p).to_str().map(str::to_string)),
+            );
+            continue;
+        }
+
+        if !meta.is_file() {
+            continue;
+        }
+
+        let name = &path.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+
+        if !name.ends_with(".proto") {
+            continue;
+        }
+
+        if !excludes.contains(&name) {
+            log::trace!("Found import {name:?}");
+            res.push(name.to_string())
+        }
+    }
+    res
 }
 
 fn complete_keywords() -> Option<lsp_types::CompletionResponse> {
@@ -495,8 +556,8 @@ mod tests {
         (Workspace::new(vec![tmp.path().into()]), tmp)
     }
 
-    fn proto(tmp: &tempfile::TempDir, path: &str, lines: &[&str]) -> (Url, String) {
-        let path = tmp.path().join(path);
+    fn proto(dir: impl AsRef<std::path::Path>, path: &str, lines: &[&str]) -> (Url, String) {
+        let path = dir.as_ref().join(path);
         let text = lines.join("\n") + "\n";
         std::fs::write(&path, &text).unwrap();
         (Url::from_file_path(path).unwrap(), text)
@@ -564,6 +625,37 @@ mod tests {
                 insert_text: Some("baz.proto\";".into()),
                 ..Default::default()
             },])
+        );
+    }
+
+    #[test]
+    fn test_complete_nested_import() {
+        let (mut ws, tmp) = setup();
+        let (uri, text) = proto(&tmp, "foo.proto", &["syntax = \"proto3\";", "import \""]);
+        proto(&tmp, "bar.proto", &["syntax = \"proto3\";"]);
+
+        let subdir = tmp.path().join("subdir");
+        let subdir = subdir.as_path();
+        std::fs::create_dir(subdir).unwrap();
+        proto(subdir, "baz.proto", &["syntax = \"proto3\";"]);
+
+        ws.open(uri.clone(), text).unwrap();
+        assert_eq!(
+            ws.complete(&uri, 1, "import \"".len()).unwrap().unwrap(),
+            lsp_types::CompletionResponse::Array(vec![
+                lsp_types::CompletionItem {
+                    label: "bar.proto".into(),
+                    kind: Some(lsp_types::CompletionItemKind::FILE),
+                    insert_text: Some("bar.proto\";".into()),
+                    ..Default::default()
+                },
+                lsp_types::CompletionItem {
+                    label: "subdir/baz.proto".into(),
+                    kind: Some(lsp_types::CompletionItemKind::FILE),
+                    insert_text: Some("subdir/baz.proto\";".into()),
+                    ..Default::default()
+                },
+            ])
         );
     }
 

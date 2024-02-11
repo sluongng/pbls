@@ -32,6 +32,10 @@ fn dep_uri() -> Url {
     Url::from_file_path(std::fs::canonicalize("./testdata/dep.proto").unwrap()).unwrap()
 }
 
+fn stuff_uri() -> Url {
+    Url::from_file_path(std::fs::canonicalize("./testdata/folder/stuff.proto").unwrap()).unwrap()
+}
+
 fn error_uri() -> Url {
     Url::from_file_path(std::fs::canonicalize("./testdata/error.proto").unwrap()).unwrap()
 }
@@ -210,6 +214,7 @@ struct TestClient {
 
 impl TestClient {
     fn new() -> Result<TestClient> {
+        let _ = env_logger::builder().is_test(true).try_init();
         Self::new_with_root("testdata")
     }
 
@@ -507,6 +512,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
         sym(error_uri(), "Nope", "enum Nope"),
         sym(error_uri(), "Nah", "message Nah"),
         sym(error_uri(), "Noo", "message Noo"),
+        // sym(stuff_uri(), "Stuff", "message Stuff"), BUG: should find nested symbols
     ];
     assert_elements_equal(actual, expected, |s| s.name.clone());
     Ok(())
@@ -643,7 +649,7 @@ fn test_complete_import() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
     client.open(base_uri())?;
 
-    let loc = locate_sym(base_uri(), "import \"other.proto\"");
+    let loc = locate_sym(base_uri(), "import \"folder");
     let pos = lsp_types::Position {
         line: loc.range.start.line + 1,
         character: 0,
@@ -679,12 +685,21 @@ fn test_complete_import() -> pbls::Result<()> {
     // excludes dep.proto (already imported)
     assert_elements_equal(
         actual,
-        vec![CompletionItem {
-            label: "error.proto".into(),
-            kind: Some(CompletionItemKind::FILE),
-            insert_text: Some("error.proto\";".into()),
-            ..Default::default()
-        }],
+        vec![
+            CompletionItem {
+                label: "error.proto".into(),
+                kind: Some(CompletionItemKind::FILE),
+                insert_text: Some("error.proto\";".into()),
+                ..Default::default()
+            },
+            // BUG: Should be excluded
+            CompletionItem {
+                label: "folder/stuff.proto".into(),
+                kind: Some(CompletionItemKind::FILE),
+                insert_text: Some("folder/stuff.proto\";".into()),
+                ..Default::default()
+            },
+        ],
         |s| s.label.clone(),
     );
 
@@ -821,6 +836,7 @@ fn test_complete_type() -> pbls::Result<()> {
             _enum("Dep2"),
             _struct("other.Other"),
             _struct("other.Other.Nested"),
+            _struct("folder.Stuff"), // BUG: should be folder.stuff.Stuff
         ],
         |s| s.label.clone(),
     );

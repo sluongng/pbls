@@ -259,7 +259,7 @@ impl File {
         );
 
         log::trace!(
-            "Getting completion context for node text:\n{}",
+            "Getting completion context for node text: {}",
             self.get_text(node),
         );
 
