@@ -836,7 +836,7 @@ fn test_complete_type() -> pbls::Result<()> {
             _enum("Dep2"),
             _struct("other.Other"),
             _struct("other.Other.Nested"),
-            _struct("folder.Stuff"), // BUG: should be folder.stuff.Stuff
+            _struct("folder.stuff.Stuff"),
         ],
         |s| s.label.clone(),
     );

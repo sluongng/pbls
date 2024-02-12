@@ -121,7 +121,7 @@ impl File {
     pub fn package(&self) -> Option<&str> {
         static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
         let query = QUERY.get_or_init(|| {
-            tree_sitter::Query::new(language(), "(package (fullIdent (ident) @id))").unwrap()
+            tree_sitter::Query::new(language(), "(package (fullIdent (ident)) @id)").unwrap()
         });
 
         let mut qc = tree_sitter::QueryCursor::new();
@@ -555,6 +555,10 @@ mod tests {
         let text = r#"syntax="proto3"; package main; package other"#;
         let file = File::new(text.to_string()).unwrap();
         assert_eq!(file.package(), Some("main".into()));
+
+        let text = r#"syntax="proto3"; package foo.bar.baz;"#;
+        let file = File::new(text.to_string()).unwrap();
+        assert_eq!(file.package(), Some("foo.bar.baz".into()));
 
         let text = r#"syntax="proto3";"#;
         let file = File::new(text.to_string()).unwrap();
