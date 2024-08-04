@@ -98,10 +98,10 @@ fn handle_document_symbols(
 
 fn handle_workspace_symbols(
     workspace: &mut workspace::Workspace,
-    _: WorkspaceSymbolParams,
+    params: WorkspaceSymbolParams,
 ) -> Result<Option<lsp_types::WorkspaceSymbolResponse>> {
     Ok(Some(lsp_types::WorkspaceSymbolResponse::Flat(
-        workspace.all_symbols()?,
+        workspace.all_symbols(&params.query)?,
     )))
 }
 

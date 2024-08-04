@@ -1,9 +1,10 @@
 use std::collections::hash_map;
 
-use crate::file;
+use crate::file::{self};
 
 use super::protoc;
 use lsp_types::{SymbolInformation, Url};
+use regex::RegexBuilder;
 use tree_sitter::QueryCursor;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -124,7 +125,7 @@ impl Workspace {
             .collect())
     }
 
-    pub fn all_symbols(&mut self) -> Result<Vec<SymbolInformation>> {
+    pub fn all_symbols(&mut self, query: &str) -> Result<Vec<SymbolInformation>> {
         let paths = self
             .proto_paths
             .iter()
@@ -136,6 +137,23 @@ impl Workspace {
             .map(|p| std::fs::canonicalize(p));
         let mut res = vec![];
         let mut qc = tree_sitter::QueryCursor::new();
+
+        let regexes: std::result::Result<Vec<_>, _> = query
+            .split_whitespace()
+            .map(|s| {
+                RegexBuilder::new(
+                    &s.chars()
+                        .map(|c| c.to_string())
+                        .collect::<Vec<_>>()
+                        .join(".*"),
+                )
+                .case_insensitive(query.chars().all(|c| !c.is_uppercase()))
+                .build()
+            })
+            .collect();
+        let regexes = regexes?;
+        log::debug!("Searching workspace symbols with patterns: {regexes:?}");
+
         for path in paths {
             let path = path?;
             let uri = Url::from_file_path(&path).or(Err(format!("Invalid path: {path:?}")))?;
@@ -148,7 +166,9 @@ impl Workspace {
                 self.files.get(&uri).unwrap()
             };
             let symbols = file.symbols(&mut qc);
-            let syms = symbols.map(|s| to_lsp_symbol(uri.clone(), s));
+            let syms = symbols
+                .filter(|s| regexes.iter().all(|r| r.is_match(&s.name)))
+                .map(|s| to_lsp_symbol(uri.clone(), s));
             res.extend(syms);
         }
         Ok(res)

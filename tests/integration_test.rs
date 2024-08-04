@@ -32,10 +32,6 @@ fn dep_uri() -> Url {
     Url::from_file_path(std::fs::canonicalize("./testdata/dep.proto").unwrap()).unwrap()
 }
 
-fn stuff_uri() -> Url {
-    Url::from_file_path(std::fs::canonicalize("./testdata/folder/stuff.proto").unwrap()).unwrap()
-}
-
 fn error_uri() -> Url {
     Url::from_file_path(std::fs::canonicalize("./testdata/error.proto").unwrap()).unwrap()
 }
@@ -486,35 +482,68 @@ fn test_workspace_symbols() -> pbls::Result<()> {
     let mut client = TestClient::new()?;
     client.open(base_uri())?;
 
-    let Some(WorkspaceSymbolResponse::Flat(actual)) =
-        client.request::<WorkspaceSymbolRequest>(WorkspaceSymbolParams {
-            query: "".into(),
-            work_done_progress_params: lsp_types::WorkDoneProgressParams {
-                work_done_token: None,
-            },
-            partial_result_params: lsp_types::PartialResultParams {
-                partial_result_token: None,
-            },
-        })?
-    else {
-        panic!("Symbols response is not Flat")
+    let mut test = |query: &str, expected| {
+        let Some(WorkspaceSymbolResponse::Flat(actual)) = client
+            .request::<WorkspaceSymbolRequest>(WorkspaceSymbolParams {
+                query: query.into(),
+                work_done_progress_params: lsp_types::WorkDoneProgressParams {
+                    work_done_token: None,
+                },
+                partial_result_params: lsp_types::PartialResultParams {
+                    partial_result_token: None,
+                },
+            })
+            .unwrap()
+        else {
+            panic!("Symbols response is not Flat")
+        };
+        assert_elements_equal(actual, expected, |s| s.name.clone());
     };
-    let expected = vec![
-        sym(other_uri(), "Other", "message Other"),
-        sym(dep_uri(), "Dep", "message Dep"),
-        sym(dep_uri(), "Dep2", "enum Dep2"),
-        sym(base_uri(), "Thing", "enum Thing"),
-        sym(base_uri(), "Foo", "message Foo"),
-        sym(base_uri(), "Foo.Buz", "message Buz"),
-        sym(base_uri(), "Bar", "message Bar"),
-        sym(base_uri(), "Empty", "message Empty"),
-        sym(other_uri(), "Other.Nested", "message Nested"),
-        sym(error_uri(), "Nope", "enum Nope"),
-        sym(error_uri(), "Nah", "message Nah"),
-        sym(error_uri(), "Noo", "message Noo"),
-        // sym(stuff_uri(), "Stuff", "message Stuff"), BUG: should find nested symbols
-    ];
-    assert_elements_equal(actual, expected, |s| s.name.clone());
+
+    // No filter, all symbols
+    test(
+        "",
+        vec![
+            sym(other_uri(), "Other", "message Other"),
+            sym(dep_uri(), "Dep", "message Dep"),
+            sym(dep_uri(), "Dep2", "enum Dep2"),
+            sym(base_uri(), "Thing", "enum Thing"),
+            sym(base_uri(), "Foo", "message Foo"),
+            sym(base_uri(), "Foo.Buz", "message Buz"),
+            sym(base_uri(), "Bar", "message Bar"),
+            sym(base_uri(), "Empty", "message Empty"),
+            sym(other_uri(), "Other.Nested", "message Nested"),
+            sym(error_uri(), "Nope", "enum Nope"),
+            sym(error_uri(), "Nah", "message Nah"),
+            sym(error_uri(), "Noo", "message Noo"),
+            // sym(stuff_uri(), "Stuff", "message Stuff"), BUG: should find nested symbols
+        ],
+    );
+
+    test(
+        "oo",
+        vec![
+            sym(base_uri(), "Foo", "message Foo"),
+            sym(base_uri(), "Foo.Buz", "message Buz"),
+            sym(error_uri(), "Noo", "message Noo"),
+        ],
+    );
+
+    test(
+        "fo",
+        vec![
+            sym(base_uri(), "Foo", "message Foo"),
+            sym(base_uri(), "Foo.Buz", "message Buz"),
+        ],
+    );
+
+    test("np", vec![sym(error_uri(), "Nope", "enum Nope")]);
+
+    test(
+        "nst oth",
+        vec![sym(other_uri(), "Other.Nested", "message Nested")],
+    );
+
     Ok(())
 }
 
