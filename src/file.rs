@@ -2,11 +2,6 @@ use std::sync::OnceLock;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-fn language() -> tree_sitter::Language {
-    static LANGUAGE: OnceLock<tree_sitter::Language> = OnceLock::new();
-    *LANGUAGE.get_or_init(|| tree_sitter_protobuf::language())
-}
-
 #[derive(Debug, PartialEq)]
 pub enum SymbolKind {
     Message,
@@ -51,7 +46,7 @@ impl File {
     pub fn new(text: String) -> Result<File> {
         let mut parser = tree_sitter::Parser::new();
         parser
-            .set_language(language())
+            .set_language(&tree_sitter_protobuf::LANGUAGE.into())
             .expect("Error loading proto language");
 
         let tree = parser.parse(&text, None).ok_or("Parse failed")?;
@@ -102,7 +97,7 @@ impl File {
 
         let mut parser = tree_sitter::Parser::new();
         parser
-            .set_language(language())
+            .set_language(&tree_sitter_protobuf::LANGUAGE.into())
             .expect("Error loading proto language");
         self.tree = parser.parse(&self.text, None).ok_or("Parse failed")?;
         log::trace!("Edited tree to: {}", self.tree.root_node().to_sexp());
@@ -121,7 +116,7 @@ impl File {
     pub fn package(&self) -> Option<&str> {
         static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
         let query = QUERY.get_or_init(|| {
-            tree_sitter::Query::new(language(), "(package (fullIdent (ident)) @id)").unwrap()
+            tree_sitter::Query::new(&tree_sitter_protobuf::LANGUAGE.into(), "(package (fullIdent (ident)) @id)").unwrap()
         });
 
         let mut qc = tree_sitter::QueryCursor::new();
@@ -140,7 +135,7 @@ impl File {
     ) -> impl Iterator<Item = &'this str> + 'cursor {
         static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
         let query = QUERY.get_or_init(|| {
-            tree_sitter::Query::new(language(), "(import (strLit) @path)").unwrap()
+            tree_sitter::Query::new(&tree_sitter_protobuf::LANGUAGE.into(), "(import (strLit) @path)").unwrap()
         });
 
         qc.matches(&query, self.tree.root_node(), self.text.as_bytes())
@@ -156,7 +151,7 @@ impl File {
         static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
         let query = QUERY.get_or_init(|| {
             tree_sitter::Query::new(
-                language(),
+                &tree_sitter_protobuf::LANGUAGE.into(),
                 "[
                      (message (messageName (ident) @id))
                      (enum (enumName (ident) @id))
@@ -327,7 +322,7 @@ impl File {
             GotoContext::Type(typ) => {
                 static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
                 let query = QUERY.get_or_init(|| {
-                    tree_sitter::Query::new(language(), "(field (type) @name)").unwrap()
+                    tree_sitter::Query::new(&tree_sitter_protobuf::LANGUAGE.into(), "(field (type) @name)").unwrap()
                 });
 
                 let mut qc = tree_sitter::QueryCursor::new();
@@ -341,7 +336,7 @@ impl File {
             GotoContext::Import(name) => {
                 static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
                 let query = QUERY.get_or_init(|| {
-                    tree_sitter::Query::new(language(), "(import (strLit) @name)").unwrap()
+                    tree_sitter::Query::new(&tree_sitter_protobuf::LANGUAGE.into(), "(import (strLit) @name)").unwrap()
                 });
                 eprintln!("query");
 
