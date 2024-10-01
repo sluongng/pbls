@@ -1,4 +1,6 @@
-use std::{collections::hash_map, str::FromStr};
+use std::collections::hash_map;
+use std::collections::HashSet;
+use std::str::FromStr;
 
 use crate::file::{self};
 
@@ -39,8 +41,10 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(proto_paths: Vec<std::path::PathBuf>) -> Workspace {
+        let mut sorted_proto_paths = proto_paths.clone();
+        sorted_proto_paths.sort();
         Workspace {
-            proto_paths: proto_paths.clone(),
+            proto_paths: sorted_proto_paths,
             files: hash_map::HashMap::new(),
         }
     }
@@ -66,7 +70,8 @@ impl Workspace {
             return Ok(());
         };
 
-        let uri = Uri::from_str(path.to_str().unwrap()).or(Err(format!("Invalid path {path:?}")))?;
+        let uri = Uri::from_str(format!("file://{}", path.to_str().unwrap()).as_str())
+            .or(Err(format!("Invalid path {path:?}")))?;
         if self.files.contains_key(&uri) {
             return Ok(()); // already parsed
         };
@@ -156,11 +161,12 @@ impl Workspace {
 
         for path in paths {
             let path = path?;
-            let uri = Uri::from_str(path.to_str().unwrap()).or(Err(format!("Invalid path: {path:?}")))?;
+            let uri = Uri::from_str(format!("file://{}", path.to_str().unwrap()).as_str())
+                .or(Err(format!("Invalid path: {path:?}")))?;
             let file = if let Some(file) = self.files.get(&uri) {
                 file
             } else {
-                let text = std::fs::read_to_string(uri.to_string())?;
+                let text = std::fs::read_to_string(uri.path().to_string()).expect(format!("Failed to read file {:?}", uri).as_str());
                 let file = file::File::new(text)?;
                 self.files.insert(uri.clone(), file);
                 self.files.get(&uri).unwrap()
@@ -229,7 +235,8 @@ impl Workspace {
             Some(file::GotoContext::Import(name)) => {
                 log::debug!("Looking up import {name:?}");
                 Ok(self.find_import(name).map(|path| lsp_types::Location {
-                    uri: Uri::from_str(path.to_str().unwrap()).unwrap(),
+                    uri: Uri::from_str(format!("file://{}", path.to_str().unwrap()).as_str())
+                        .unwrap(),
                     range: lsp_types::Range::default(),
                 }))
             }
@@ -308,7 +315,9 @@ impl Workspace {
         let imports = file
             .imports(&mut qc)
             .filter_map(|name| self.find_import(name))
-            .map(|path| Uri::from_str(path.to_str().unwrap()).unwrap())
+            .map(|path| {
+                Uri::from_str(format!("file://{}", path.to_str().unwrap()).as_str()).unwrap()
+            })
             .map(|uri| (uri.clone(), self.get(&uri).unwrap()));
 
         let mut qc = tree_sitter::QueryCursor::new();
@@ -360,7 +369,9 @@ impl Workspace {
         let imports = file
             .imports(&mut qc)
             .filter_map(|name| self.find_import(name))
-            .map(|path| Uri::from_str(path.to_str().unwrap()).unwrap())
+            .map(|path| {
+                Uri::from_str(format!("file://{}", path.to_str().unwrap()).as_str()).unwrap()
+            })
             .map(|uri| self.get(&uri).unwrap());
 
         for file in imports {
@@ -420,19 +431,27 @@ impl Workspace {
 
         let file = self.files.get(url).ok_or("File not loaded: {uri}")?;
         let mut qc = tree_sitter::QueryCursor::new();
-        let existing = file
-            .imports(&mut qc)
-            .chain(std::iter::once(current))
-            .collect::<Vec<_>>();
+        let existing: HashSet<_> =
+            HashSet::from_iter(file.imports(&mut qc).chain(std::iter::once(current)));
 
         log::trace!("Excluding existing imports: {existing:?}");
 
+        let mut last_path = None;
         let items = self
             .proto_paths
             .iter()
-            .map(|p| find_protos(p.as_path(), &existing))
+            .filter(|pb| {
+                if let Some(last_path) = last_path {
+                    !pb.starts_with(last_path)
+                } else {
+                    last_path = Some(pb.to_str().unwrap());
+                    true
+                }
+            })
+            .map(|p| find_protos(p.as_path()))
             .flat_map(|p| {
                 p.iter()
+                    .filter(|p| !existing.contains(&p.as_str()))
                     .map(|s| lsp_types::CompletionItem {
                         insert_text: Some(format!("{}\";", s)),
                         label: s.to_owned(),
@@ -447,7 +466,7 @@ impl Workspace {
     }
 }
 
-fn find_protos(dir: &std::path::Path, excludes: &Vec<&str>) -> Vec<String> {
+fn find_protos(dir: &std::path::Path) -> Vec<String> {
     let mut res = vec![];
     let entries = match std::fs::read_dir(dir) {
         Ok(ok) => ok,
@@ -476,7 +495,7 @@ fn find_protos(dir: &std::path::Path, excludes: &Vec<&str>) -> Vec<String> {
 
         if meta.is_dir() {
             let dir = dir.join(path.path());
-            let protos = find_protos(dir.as_path(), excludes);
+            let protos = find_protos(dir.as_path());
             let root = &path.file_name();
             let root = std::path::PathBuf::from(root);
             res.extend(
@@ -500,10 +519,8 @@ fn find_protos(dir: &std::path::Path, excludes: &Vec<&str>) -> Vec<String> {
             continue;
         }
 
-        if !excludes.contains(&name) {
-            log::trace!("Found import {name:?}");
-            res.push(name.to_string())
-        }
+        log::trace!("Found import {name:?}");
+        res.push(name.to_string())
     }
     res
 }
@@ -581,7 +598,10 @@ mod tests {
         let path = dir.as_ref().join(path);
         let text = lines.join("\n") + "\n";
         std::fs::write(&path, &text).unwrap();
-        (Uri::from_str(path.to_str().unwrap()).unwrap(), text)
+        (
+            Uri::from_str(format!("file://{}", path.to_str().unwrap()).as_str()).unwrap(),
+            text,
+        )
     }
 
     #[test]
@@ -605,7 +625,14 @@ mod tests {
     fn test_complete_syntax() {
         let _ = env_logger::builder().is_test(true).try_init();
         let mut ws = Workspace::new(vec![]);
-        let uri = Uri::from_str(std::env::temp_dir().join("foo.proto").to_str().unwrap()).unwrap();
+        let uri = Uri::from_str(
+            format!(
+                "file://{}",
+                std::env::temp_dir().join("foo.proto").to_str().unwrap()
+            )
+            .as_str(),
+        )
+        .unwrap();
         // TODO: This returns Error because protoc needs a file on disk.
         // Replace with unwrap after errors are based on treesitter.
         _ = ws.open(uri.clone(), "".into());
@@ -665,15 +692,15 @@ mod tests {
             ws.complete(&uri, 1, "import \"".len()).unwrap().unwrap(),
             lsp_types::CompletionResponse::Array(vec![
                 lsp_types::CompletionItem {
-                    label: "bar.proto".into(),
-                    kind: Some(lsp_types::CompletionItemKind::FILE),
-                    insert_text: Some("bar.proto\";".into()),
-                    ..Default::default()
-                },
-                lsp_types::CompletionItem {
                     label: "subdir/baz.proto".into(),
                     kind: Some(lsp_types::CompletionItemKind::FILE),
                     insert_text: Some("subdir/baz.proto\";".into()),
+                    ..Default::default()
+                },
+                lsp_types::CompletionItem {
+                    label: "bar.proto".into(),
+                    kind: Some(lsp_types::CompletionItemKind::FILE),
+                    insert_text: Some("bar.proto\";".into()),
                     ..Default::default()
                 },
             ])

@@ -13,30 +13,85 @@ use lsp_types::{
     DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
     InitializeParams, Location, PartialResultParams, Position, PublishDiagnosticsParams, Range,
     SymbolInformation, SymbolKind, TextDocumentContentChangeEvent, TextDocumentIdentifier,
-    TextDocumentItem, TextDocumentPositionParams, Url, WorkDoneProgressParams,
+    TextDocumentItem, TextDocumentPositionParams, Uri, WorkDoneProgressParams,
     WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use pbls::Result;
 use pretty_assertions::assert_eq;
 use std::error::Error;
+use std::str::FromStr;
 
-fn base_uri() -> Url {
-    Url::from_file_path(std::fs::canonicalize("./testdata/simple.proto").unwrap()).unwrap()
+fn base_uri() -> Uri {
+    Uri::from_str(
+        format!(
+            "file://{}",
+            std::fs::canonicalize("./testdata/simple.proto")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        )
+        .as_str(),
+    )
+    .unwrap()
 }
 
-fn other_uri() -> Url {
-    Url::from_file_path(std::fs::canonicalize("./testdata/other.proto").unwrap()).unwrap()
+fn other_uri() -> Uri {
+    Uri::from_str(
+        format!(
+            "file://{}",
+            std::fs::canonicalize("./testdata/other.proto")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        )
+        .as_str(),
+    )
+    .unwrap()
 }
 
-fn dep_uri() -> Url {
-    Url::from_file_path(std::fs::canonicalize("./testdata/dep.proto").unwrap()).unwrap()
+fn dep_uri() -> Uri {
+    Uri::from_str(
+        format!(
+            "file://{}",
+            std::fs::canonicalize("./testdata/dep.proto")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        )
+        .as_str(),
+    )
+    .unwrap()
 }
 
-fn error_uri() -> Url {
-    Url::from_file_path(std::fs::canonicalize("./testdata/error.proto").unwrap()).unwrap()
+fn error_uri() -> Uri {
+    Uri::from_str(
+        format!(
+            "file://{}",
+            std::fs::canonicalize("./testdata/error.proto")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        )
+        .as_str(),
+    )
+    .unwrap()
 }
 
-fn diag(uri: Url, target: &str, message: &str) -> Diagnostic {
+fn stuff_uri() -> Uri {
+    Uri::from_str(
+        format!(
+            "file://{}",
+            std::fs::canonicalize("./testdata/folder/stuff.proto")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        )
+        .as_str(),
+    )
+    .unwrap()
+}
+
+fn diag(uri: Uri, target: &str, message: &str) -> Diagnostic {
     Diagnostic {
         range: locate_sym(uri, target).range,
         message: message.into(),
@@ -46,7 +101,7 @@ fn diag(uri: Url, target: &str, message: &str) -> Diagnostic {
     }
 }
 
-fn sym(uri: Url, name: &str, text: &str) -> SymbolInformation {
+fn sym(uri: Uri, name: &str, text: &str) -> SymbolInformation {
     let kind = text
         .split_once(" ")
         .unwrap_or_else(|| panic!("Invalid symbol {text}"))
@@ -68,14 +123,14 @@ fn sym(uri: Url, name: &str, text: &str) -> SymbolInformation {
 }
 
 // Generate TextDocumentPositionParams for the given string and offset.
-fn position(uri: Url, text: &str, column: u32) -> TextDocumentPositionParams {
-    let filetext = std::fs::read_to_string(uri.to_file_path().unwrap()).unwrap();
+fn position(uri: Uri, text: &str, column: u32) -> TextDocumentPositionParams {
+    let filetext = std::fs::read_to_string(uri.path().as_str()).unwrap();
     let (lineno, line) = filetext
         .lines()
         .enumerate()
         .skip_while(|(_, l)| !l.contains(text))
         .next()
-        .unwrap_or_else(|| panic!("{text} not found in {uri}"));
+        .unwrap_or_else(|| panic!("{text} not found in {uri:?}"));
 
     let character = line.find(text).unwrap_or(0);
     TextDocumentPositionParams {
@@ -89,7 +144,7 @@ fn position(uri: Url, text: &str, column: u32) -> TextDocumentPositionParams {
 
 // Generate a GotoDefinition request for a line containing `text`,
 // with the cursor offset from the start of the search string by `offset`
-fn goto(uri: Url, text: &str, column: u32) -> GotoDefinitionParams {
+fn goto(uri: Uri, text: &str, column: u32) -> GotoDefinitionParams {
     GotoDefinitionParams {
         work_done_progress_params: lsp_types::WorkDoneProgressParams {
             work_done_token: None,
@@ -103,11 +158,11 @@ fn goto(uri: Url, text: &str, column: u32) -> GotoDefinitionParams {
 
 // Given "some |search| string", locate "some search string" in the document
 // and return the Location of "search".
-fn locate(uri: Url, text: &str) -> Location {
+fn locate(uri: Uri, text: &str) -> Location {
     let start_off = text.find("|").unwrap();
     let end_off = text.rfind("|").unwrap() - 1;
     let text = text.replace("|", "");
-    let filetext = std::fs::read_to_string(uri.to_file_path().unwrap()).unwrap();
+    let filetext = std::fs::read_to_string(uri.path().as_str()).unwrap();
     let (start_line, start_col) = filetext
         .lines()
         .enumerate()
@@ -115,7 +170,7 @@ fn locate(uri: Url, text: &str) -> Location {
             Some(col) => Some((i, col)),
             None => None,
         })
-        .unwrap_or_else(|| panic!("{text} not found in {uri}"));
+        .unwrap_or_else(|| panic!("{text} not found in {uri:?}"));
 
     Location {
         uri,
@@ -135,8 +190,8 @@ fn locate(uri: Url, text: &str) -> Location {
 // Return the Location for the definition of the type `name`.
 // `name` should include the "message" or "enum" prefix.
 // Assumes that the leading { is on the same line as the enum/message.
-fn locate_sym(uri: Url, name: &str) -> Location {
-    let filetext = std::fs::read_to_string(uri.to_file_path().unwrap()).unwrap();
+fn locate_sym(uri: Uri, name: &str) -> Location {
+    let filetext = std::fs::read_to_string(uri.path().as_str()).unwrap();
     let (start_line, start_col) = filetext
         .lines()
         .enumerate()
@@ -144,7 +199,7 @@ fn locate_sym(uri: Url, name: &str) -> Location {
             Some(col) => Some((i, col)),
             None => None,
         })
-        .unwrap_or_else(|| panic!("{name} not found in {uri}"));
+        .unwrap_or_else(|| panic!("{name} not found in {uri:?}"));
 
     let mut nesting = 0;
     let mut end_line = 0;
@@ -174,7 +229,7 @@ fn locate_sym(uri: Url, name: &str) -> Location {
     }
 }
 
-fn completion_params(uri: Url, position: Position) -> CompletionParams {
+fn completion_params(uri: Uri, position: Position) -> CompletionParams {
     CompletionParams {
         text_document_position: TextDocumentPositionParams {
             text_document: TextDocumentIdentifier { uri },
@@ -226,7 +281,16 @@ impl TestClient {
         };
 
         client.request::<Initialize>(InitializeParams {
-            root_uri: Some(Url::from_file_path(std::fs::canonicalize(path).unwrap()).unwrap()),
+            root_uri: Some(
+                Uri::from_str(
+                    format!(
+                        "file://{}",
+                        std::fs::canonicalize(path).unwrap().to_str().unwrap()
+                    )
+                    .as_str(),
+                )
+                .unwrap(),
+            ),
             ..Default::default()
         })?;
         client.notify::<Initialized>(InitializedParams {})?;
@@ -296,8 +360,8 @@ impl TestClient {
         Ok(())
     }
 
-    fn open(&self, uri: Url) -> pbls::Result<PublishDiagnosticsParams> {
-        let text = std::fs::read_to_string(uri.path())?;
+    fn open(&self, uri: Uri) -> pbls::Result<PublishDiagnosticsParams> {
+        let text = std::fs::read_to_string(uri.path().as_str())?;
         self.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
                 uri,
@@ -364,7 +428,7 @@ fn test_diagnostics_on_open() -> pbls::Result<()> {
 fn test_diagnostics_on_save() -> pbls::Result<()> {
     let tmp = tempfile::tempdir()?;
     let path = tmp.path().join("example.proto");
-    let uri = Url::from_file_path(&path).unwrap();
+    let uri = Uri::from_str(format!("file://{}", path.to_str().unwrap()).as_str()).unwrap();
     let client = TestClient::new_with_root(&tmp)?;
 
     let text = r#"
@@ -516,7 +580,7 @@ fn test_workspace_symbols() -> pbls::Result<()> {
             sym(error_uri(), "Nope", "enum Nope"),
             sym(error_uri(), "Nah", "message Nah"),
             sym(error_uri(), "Noo", "message Noo"),
-            // sym(stuff_uri(), "Stuff", "message Stuff"), BUG: should find nested symbols
+            sym(stuff_uri(), "Stuff", "message Stuff"),
         ],
     );
 
@@ -719,13 +783,6 @@ fn test_complete_import() -> pbls::Result<()> {
                 label: "error.proto".into(),
                 kind: Some(CompletionItemKind::FILE),
                 insert_text: Some("error.proto\";".into()),
-                ..Default::default()
-            },
-            // BUG: Should be excluded
-            CompletionItem {
-                label: "folder/stuff.proto".into(),
-                kind: Some(CompletionItemKind::FILE),
-                insert_text: Some("folder/stuff.proto\";".into()),
                 ..Default::default()
             },
         ],
@@ -950,7 +1007,14 @@ fn test_import_discovery() -> pbls::Result<()> {
 
     std::fs::write(&tmp.path().join("b/d/bd.txt"), "not a proto")?;
 
-    let root_uri = Url::from_file_path(&tmp.path().join("root.proto")).unwrap();
+    let root_uri = Uri::from_str(
+        format!(
+            "file://{}",
+            &tmp.path().join("root.proto").to_str().unwrap()
+        )
+        .as_str(),
+    )
+    .unwrap();
     let client = TestClient::new_with_root(&tmp)?;
 
     assert_eq!(

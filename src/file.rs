@@ -116,7 +116,11 @@ impl File {
     pub fn package(&self) -> Option<&str> {
         static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
         let query = QUERY.get_or_init(|| {
-            tree_sitter::Query::new(&tree_sitter_protobuf::LANGUAGE.into(), "(package (fullIdent (ident)) @id)").unwrap()
+            tree_sitter::Query::new(
+                &tree_sitter_protobuf::LANGUAGE.into(),
+                "(package (fullIdent (ident)) @id)",
+            )
+            .unwrap()
         });
 
         let mut qc = tree_sitter::QueryCursor::new();
@@ -135,7 +139,11 @@ impl File {
     ) -> impl Iterator<Item = &'this str> + 'cursor {
         static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
         let query = QUERY.get_or_init(|| {
-            tree_sitter::Query::new(&tree_sitter_protobuf::LANGUAGE.into(), "(import (strLit) @path)").unwrap()
+            tree_sitter::Query::new(
+                &tree_sitter_protobuf::LANGUAGE.into(),
+                "(import (strLit) @path)",
+            )
+            .unwrap()
         });
 
         qc.matches(&query, self.tree.root_node(), self.text.as_bytes())
@@ -218,11 +226,11 @@ impl File {
             Some(n) if n.kind() == "enumBody" => n
                 .parent() // enum
                 .and_then(|p| self.type_name(p))
-                .and_then(|n| Some(CompletionContext::Enum(n))),
+                .map(|n| CompletionContext::Enum(n)),
             Some(n) if n.kind() == "messageBody" => n
                 .parent() // message
                 .and_then(|p| self.type_name(p))
-                .and_then(|n| Some(CompletionContext::Message(n))),
+                .map(|n| CompletionContext::Message(n)),
             Some(n) => self.parent_context(n.parent()),
         }
     }
@@ -232,7 +240,7 @@ impl File {
         row: usize,
         col: usize,
     ) -> Result<Option<CompletionContext>> {
-        if self.tree.root_node().kind() != "source_file" {
+        if self.tree.root_node().kind() != "sourceFile" {
             // If the whole document is invalid, we need to define a syntax.
             return Ok(Some(CompletionContext::Syntax));
         }
@@ -240,7 +248,7 @@ impl File {
         let pos = tree_sitter::Point {
             row: row.try_into().unwrap(),
             // Generally, the node before the cursor is more interesting for context.
-            column: (col.checked_sub(1).unwrap_or(0)).try_into()?,
+            column: (col.saturating_sub(1)),
         };
         let node = self
             .tree
@@ -287,9 +295,9 @@ impl File {
             self.parent_context(Some(node))
         } else if is_top_level_error(node) {
             // typically means we're typing the first word of a line
-            // mes| -> (source_file (ERROR (ERROR)))
+            // mes| -> (sourceFile (ERROR (ERROR)))
             Some(CompletionContext::Keyword)
-        } else if node.kind() == "source_file" {
+        } else if node.kind() == "sourceFile" {
             // NOTE: Not very efficient, but we're in a difficult spot here.
             let line: String = self
                 .text
@@ -322,7 +330,11 @@ impl File {
             GotoContext::Type(typ) => {
                 static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
                 let query = QUERY.get_or_init(|| {
-                    tree_sitter::Query::new(&tree_sitter_protobuf::LANGUAGE.into(), "(field (type) @name)").unwrap()
+                    tree_sitter::Query::new(
+                        &tree_sitter_protobuf::LANGUAGE.into(),
+                        "(field (type) @name)",
+                    )
+                    .unwrap()
                 });
 
                 let mut qc = tree_sitter::QueryCursor::new();
@@ -336,7 +348,11 @@ impl File {
             GotoContext::Import(name) => {
                 static QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
                 let query = QUERY.get_or_init(|| {
-                    tree_sitter::Query::new(&tree_sitter_protobuf::LANGUAGE.into(), "(import (strLit) @name)").unwrap()
+                    tree_sitter::Query::new(
+                        &tree_sitter_protobuf::LANGUAGE.into(),
+                        "(import (strLit) @name)",
+                    )
+                    .unwrap()
                 });
                 eprintln!("query");
 
@@ -433,7 +449,7 @@ fn is_top_level_error(node: tree_sitter::Node) -> bool {
     if node.is_error() || node.is_missing() {
         match node.parent() {
             None => true,
-            Some(n) if n.kind() == "source_file" => true,
+            Some(n) if n.kind() == "sourceFile" => true,
             Some(n) if n.is_error() || n.is_missing() => is_top_level_error(n),
             _ => false,
         }

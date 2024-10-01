@@ -7,6 +7,7 @@ pub fn diags(
     text: &str,
     proto_paths: &Vec<std::path::PathBuf>,
 ) -> Result<Vec<Diagnostic>> {
+    log::trace!("Checking {uri:?}");
     if uri.scheme().unwrap().as_str() != "file" {
         Err(format!("Unsupported URI scheme {uri:?}"))?;
     }
@@ -28,7 +29,13 @@ pub fn diags(
                         None
                     })
                 })
-                .map(|p| "-I".to_string() + p),
+                .map(|p| {
+                    "-I".to_string()
+                        + std::fs::canonicalize(p)
+                            .unwrap_or(p.into())
+                            .to_str()
+                            .unwrap()
+                }),
         )
         // Add the file we're compiling
         .arg(path.to_string());
@@ -101,7 +108,10 @@ mod tests {
         let path = tmp.path().join(path);
         let text = lines.join("\n") + "\n";
         std::fs::write(&path, &text).unwrap();
-        (Uri::from_str(path.to_str().unwrap()).unwrap(), text)
+        (
+            Uri::from_str(format!("file://{}", path.to_str().unwrap()).as_str()).unwrap(),
+            text,
+        )
     }
 
     #[test]
