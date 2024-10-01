@@ -15,7 +15,7 @@ serde = { version = "1.0", features = ["derive"] }
 lsp-types = "0.94.1"
 lsp-server = "0.7.4"
 toml = "0.8.6"
-tree-sitter-protobuf = { git = "https://github.com/sluongng/tree-sitter-protobuf", rev = "ccdc46753fda2512550da634fc94161a48074806" }
+tree-sitter-protobuf = { git = "https://github.com/sluongng/tree-sitter-protobuf", rev = "f90291422082f7e745710123cb4a70c1874dafb7" }
 tree-sitter = "~0.23.0"
 log = "0.4.20"
 env_logger = { version = "0.10.1", default-features = false }
