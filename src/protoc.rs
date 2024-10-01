@@ -38,7 +38,7 @@ pub fn diags(
                 }),
         )
         // Add the file we're compiling
-        .arg(path.to_string());
+        .arg(std::fs::canonicalize(path.as_str()).unwrap_or(path.as_str().into()));
 
     log::debug!("Running protoc: {cmd:?}");
     let output = cmd.output()?;
