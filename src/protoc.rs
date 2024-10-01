@@ -1,19 +1,17 @@
-use lsp_types::{Diagnostic, DiagnosticSeverity, Range, Url};
+use lsp_types::{Diagnostic, DiagnosticSeverity, Range, Uri};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub fn diags(
-    uri: &Url,
+    uri: &Uri,
     text: &str,
     proto_paths: &Vec<std::path::PathBuf>,
 ) -> Result<Vec<Diagnostic>> {
-    if uri.scheme() != "file" {
-        Err(format!("Unsupported URI scheme {uri}"))?;
+    if uri.scheme().unwrap().as_str() != "file" {
+        Err(format!("Unsupported URI scheme {uri:?}"))?;
     }
 
-    let path = uri
-        .to_file_path()
-        .or(Err(format!("Failed to normalize URI path: {uri}")))?;
+    let path = uri.path();
 
     let mut cmd = std::process::Command::new("protoc");
     cmd
@@ -33,7 +31,7 @@ pub fn diags(
                 .map(|p| "-I".to_string() + p),
         )
         // Add the file we're compiling
-        .arg(path.to_str().ok_or(format!("Non-unicode path: {path:?}"))?);
+        .arg(path.to_string());
 
     log::debug!("Running protoc: {cmd:?}");
     let output = cmd.output()?;
@@ -94,14 +92,16 @@ fn parse_diag(diag: &str, file_contents: &str) -> Option<lsp_types::Diagnostic> 
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn proto(tmp: &tempfile::TempDir, path: &str, lines: &[&str]) -> (Url, String) {
+    fn proto(tmp: &tempfile::TempDir, path: &str, lines: &[&str]) -> (Uri, String) {
         let path = tmp.path().join(path);
         let text = lines.join("\n") + "\n";
         std::fs::write(&path, &text).unwrap();
-        (Url::from_file_path(path).unwrap(), text)
+        (Uri::from_str(path.to_str().unwrap()).unwrap(), text)
     }
 
     #[test]

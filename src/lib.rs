@@ -26,12 +26,13 @@ use lsp_types::{
 };
 use std::error::Error;
 use std::fs;
+use std::path::PathBuf;
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 #[derive(Debug, serde::Deserialize)]
 struct Config {
-    proto_paths: Vec<std::path::PathBuf>,
+    proto_paths: Vec<PathBuf>,
 }
 
 // Handle a request, returning the response to send.
@@ -252,7 +253,7 @@ pub fn run(connection: Connection) -> Result<()> {
     let params: InitializeParams = serde_json::from_value(init_params).unwrap();
     let root = params
         .root_uri
-        .map(|u| u.to_file_path().unwrap())
+        .map(|u| PathBuf::from(u.path().as_str()))
         .unwrap_or(std::env::current_dir().unwrap());
 
     // TODO: merge config from init params

@@ -1,9 +1,9 @@
-use std::collections::hash_map;
+use std::{collections::hash_map, str::FromStr};
 
 use crate::file::{self};
 
 use super::protoc;
-use lsp_types::{SymbolInformation, Url};
+use lsp_types::{SymbolInformation, Uri};
 use regex::RegexBuilder;
 use tree_sitter::QueryCursor;
 
@@ -34,7 +34,7 @@ const OPTIONS: &[&str] = &[
 
 pub struct Workspace {
     proto_paths: Vec<std::path::PathBuf>,
-    files: std::collections::HashMap<Url, file::File>,
+    files: std::collections::HashMap<Uri, file::File>,
 }
 
 impl Workspace {
@@ -45,11 +45,11 @@ impl Workspace {
         }
     }
 
-    fn get(self: &Self, uri: &Url) -> Result<&file::File> {
+    fn get(self: &Self, uri: &Uri) -> Result<&file::File> {
         Ok(self
             .files
             .get(uri)
-            .ok_or(format!("File not loaded: {uri}"))?)
+            .ok_or(format!("File not loaded: {uri:?}"))?)
     }
 
     fn find_import(&self, name: &str) -> Option<std::path::PathBuf> {
@@ -66,7 +66,7 @@ impl Workspace {
             return Ok(());
         };
 
-        let uri = Url::from_file_path(path.clone()).or(Err(format!("Invalid path {path:?}")))?;
+        let uri = Uri::from_str(path.to_str().unwrap()).or(Err(format!("Invalid path {path:?}")))?;
         if self.files.contains_key(&uri) {
             return Ok(()); // already parsed
         };
@@ -82,7 +82,7 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn open(&mut self, uri: Url, text: String) -> Result<Vec<lsp_types::Diagnostic>> {
+    pub fn open(&mut self, uri: Uri, text: String) -> Result<Vec<lsp_types::Diagnostic>> {
         let diags = protoc::diags(&uri, &text, &self.proto_paths);
         let file = file::File::new(text)?;
 
@@ -98,25 +98,25 @@ impl Workspace {
         diags
     }
 
-    pub fn save(&mut self, uri: Url) -> Result<Vec<lsp_types::Diagnostic>> {
+    pub fn save(&mut self, uri: Uri) -> Result<Vec<lsp_types::Diagnostic>> {
         let file = self.get(&uri)?;
         protoc::diags(&uri, &file.text(), &self.proto_paths)
     }
 
     pub fn edit(
         &mut self,
-        uri: &Url,
+        uri: &Uri,
         changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
     ) -> Result<()> {
         log::trace!("edit");
         self.files
             .get_mut(uri)
-            .ok_or(format!("File not loaded: {uri}"))?
+            .ok_or(format!("File not loaded: {uri:?}"))?
             .edit(changes)
             .into()
     }
 
-    pub fn symbols(&self, uri: &Url) -> Result<Vec<SymbolInformation>> {
+    pub fn symbols(&self, uri: &Uri) -> Result<Vec<SymbolInformation>> {
         let mut qc = tree_sitter::QueryCursor::new();
         Ok(self
             .get(uri)?
@@ -156,11 +156,11 @@ impl Workspace {
 
         for path in paths {
             let path = path?;
-            let uri = Url::from_file_path(&path).or(Err(format!("Invalid path: {path:?}")))?;
+            let uri = Uri::from_str(path.to_str().unwrap()).or(Err(format!("Invalid path: {path:?}")))?;
             let file = if let Some(file) = self.files.get(&uri) {
                 file
             } else {
-                let text = std::fs::read_to_string(uri.path())?;
+                let text = std::fs::read_to_string(uri.to_string())?;
                 let file = file::File::new(text)?;
                 self.files.insert(uri.clone(), file);
                 self.files.get(&uri).unwrap()
@@ -176,7 +176,7 @@ impl Workspace {
 
     pub fn complete(
         &self,
-        uri: &Url,
+        uri: &Uri,
         line: usize,
         character: usize,
     ) -> Result<Option<lsp_types::CompletionResponse>> {
@@ -219,7 +219,7 @@ impl Workspace {
 
     // Return the relative paths of proto files under the given dir.
 
-    pub fn goto(&self, uri: Url, pos: lsp_types::Position) -> Result<Option<lsp_types::Location>> {
+    pub fn goto(&self, uri: Uri, pos: lsp_types::Position) -> Result<Option<lsp_types::Location>> {
         let file = self.get(&uri)?;
         let ctx = file.type_at(pos.line.try_into()?, pos.character.try_into()?);
         log::debug!("Finding definition for {ctx:?}");
@@ -229,7 +229,7 @@ impl Workspace {
             Some(file::GotoContext::Import(name)) => {
                 log::debug!("Looking up import {name:?}");
                 Ok(self.find_import(name).map(|path| lsp_types::Location {
-                    uri: Url::from_file_path(path).unwrap(),
+                    uri: Uri::from_str(path.to_str().unwrap()).unwrap(),
                     range: lsp_types::Range::default(),
                 }))
             }
@@ -266,7 +266,7 @@ impl Workspace {
 
     fn find_symbol(
         &self,
-        uri: Url,
+        uri: Uri,
         file: &file::File,
         typ: &file::GotoTypeContext,
     ) -> Result<Option<lsp_types::Location>> {
@@ -275,7 +275,7 @@ impl Workspace {
         // First look within the file, qualifying the name if it is nested.
         if let Some(sym) = typ.parent.as_ref().and_then(|p| {
             let qualified = format!("{p}.{}", typ.name);
-            log::trace!("Searching for {qualified} in {uri}");
+            log::trace!("Searching for {qualified} in {uri:?}");
             file.symbols(&mut qc).find(|sym| sym.name == qualified)
         }) {
             return Ok(Some(lsp_types::Location {
@@ -284,7 +284,7 @@ impl Workspace {
             }));
         }
 
-        log::trace!("Searching for {} in {uri}", typ.name);
+        log::trace!("Searching for {} in {uri:?}", typ.name);
         // Next look within the file for the unqualified name.
         if let Some(sym) = file.symbols(&mut qc).find(|s| s.name == typ.name) {
             return Ok(Some(lsp_types::Location {
@@ -294,7 +294,7 @@ impl Workspace {
         };
 
         // If the type is nested, try the fully qualified name
-        log::trace!("Searching for {} in {uri}", typ.name);
+        log::trace!("Searching for {} in {uri:?}", typ.name);
         let mut qc = tree_sitter::QueryCursor::new();
         if let Some(sym) = file.symbols(&mut qc).find(|s| s.name == typ.name) {
             return Ok(Some(lsp_types::Location {
@@ -308,7 +308,7 @@ impl Workspace {
         let imports = file
             .imports(&mut qc)
             .filter_map(|name| self.find_import(name))
-            .map(|path| Url::from_file_path(path).unwrap())
+            .map(|path| Uri::from_str(path.to_str().unwrap()).unwrap())
             .map(|uri| (uri.clone(), self.get(&uri).unwrap()));
 
         let mut qc = tree_sitter::QueryCursor::new();
@@ -316,7 +316,7 @@ impl Workspace {
         for (uri, file) in imports {
             let package = file.package();
             if let Some(sym) = if package == local_package {
-                log::trace!("Searching for {} in {uri}", typ.name);
+                log::trace!("Searching for {} in {uri:?}", typ.name);
                 // same package, match the name without the package prefix
                 file.symbols(&mut qc).find(|sym| sym.name == typ.name)
             } else if let Some(package) = package {
@@ -329,11 +329,11 @@ impl Workspace {
                     .strip_prefix(".")
                     .unwrap_or(typ.name)
                     .to_string();
-                log::trace!("Searching for {} in {uri} (different package)", qualified);
+                log::trace!("Searching for {} in {uri:?} (different package)", qualified);
                 file.symbols(&mut qc).find(|sym| sym.name == qualified)
             } else {
                 // target file has no package
-                log::trace!("Searching for {} in {uri}", typ.name);
+                log::trace!("Searching for {} in {uri:?}", typ.name);
                 file.symbols(&mut qc).find(|sym| sym.name == typ.name)
             } {
                 return Ok(Some(lsp_types::Location {
@@ -360,7 +360,7 @@ impl Workspace {
         let imports = file
             .imports(&mut qc)
             .filter_map(|name| self.find_import(name))
-            .map(|path| Url::from_file_path(path).unwrap())
+            .map(|path| Uri::from_str(path.to_str().unwrap()).unwrap())
             .map(|uri| self.get(&uri).unwrap());
 
         for file in imports {
@@ -408,11 +408,11 @@ impl Workspace {
 
     fn complete_imports(
         &self,
-        url: &lsp_types::Url,
+        url: &lsp_types::Uri,
     ) -> Result<Option<lsp_types::CompletionResponse>> {
         log::debug!("Completing imports for {url:?}");
 
-        let current = std::path::Path::new(url.path())
+        let current = std::path::Path::new(url.path().as_str())
             .file_name()
             .ok_or("Invalid path: {uri}")?
             .to_str()
@@ -533,7 +533,7 @@ fn to_lsp_range(r: tree_sitter::Range) -> lsp_types::Range {
     }
 }
 
-fn to_lsp_symbol(uri: Url, sym: file::Symbol) -> lsp_types::SymbolInformation {
+fn to_lsp_symbol(uri: Uri, sym: file::Symbol) -> lsp_types::SymbolInformation {
     // deprecated field is deprecated, but cannot be omitted
     #[allow(deprecated)]
     lsp_types::SymbolInformation {
@@ -577,11 +577,11 @@ mod tests {
         (Workspace::new(vec![tmp.path().into()]), tmp)
     }
 
-    fn proto(dir: impl AsRef<std::path::Path>, path: &str, lines: &[&str]) -> (Url, String) {
+    fn proto(dir: impl AsRef<std::path::Path>, path: &str, lines: &[&str]) -> (Uri, String) {
         let path = dir.as_ref().join(path);
         let text = lines.join("\n") + "\n";
         std::fs::write(&path, &text).unwrap();
-        (Url::from_file_path(path).unwrap(), text)
+        (Uri::from_str(path.to_str().unwrap()).unwrap(), text)
     }
 
     #[test]
@@ -605,7 +605,7 @@ mod tests {
     fn test_complete_syntax() {
         let _ = env_logger::builder().is_test(true).try_init();
         let mut ws = Workspace::new(vec![]);
-        let uri = Url::from_file_path(std::env::temp_dir().join("foo.proto")).unwrap();
+        let uri = Uri::from_str(std::env::temp_dir().join("foo.proto").to_str().unwrap()).unwrap();
         // TODO: This returns Error because protoc needs a file on disk.
         // Replace with unwrap after errors are based on treesitter.
         _ = ws.open(uri.clone(), "".into());
